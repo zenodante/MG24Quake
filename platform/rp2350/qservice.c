@@ -24,7 +24,7 @@ static qinput_event_t input_queue[QUEUE_SIZE];
 static sound_cmd_t sound_queue[QUEUE_SIZE];
 static qservice_stats_t stats;
 static qmix_t mixer;
-static uint16_t lcd[2][Q_WIDTH*LCD_ROWS],lut[256];
+static uint16_t lcd_row0[Q_WIDTH],lcd_row1[Q_WIDTH],lut[256];
 static uint16_t audio[2][QMIX_BLOCK];
 static int audio_dma[2];
 static unsigned audio_slice;
@@ -136,9 +136,10 @@ static void video_service(void) {
         counter(&stats.frames);return;
     }
     const uint8_t *src=frames[active_frame].pixels+lcd_y*Q_WIDTH;
-    for(unsigned i=0;i<Q_WIDTH*LCD_ROWS;++i)lcd[lcd_slot][i]=lut[src[i]];
-    st7789_write_dma((const uint8_t *)lcd[lcd_slot],sizeof lcd[0]);
-    lcd_slot^=1;lcd_y+=LCD_ROWS;
+    uint16_t *dst=lcd_slot?lcd_row1:lcd_row0;
+    for(unsigned i=0;i<Q_WIDTH;++i)dst[i]=lut[src[i]];
+    st7789_write_dma((const uint8_t *)dst,sizeof lcd_row0);
+    lcd_slot^=1;++lcd_y;
 }
 static void worker(void) {
     i2c_init(i2c0,400000);
@@ -146,8 +147,8 @@ static void worker(void) {
     gpio_pull_up(20);gpio_pull_up(21);
     st7789_init(320,240,ST7789_ROTATE_0,false,ST7789_COLOR_RGB565);
     st7789_set_backlight(0);
-    memset(lcd,0,sizeof lcd);st7789_set_window(0,0,320,240);st7789_start_write();
-    for(unsigned y=0;y<240;y+=LCD_ROWS)st7789_write_dma((const uint8_t *)lcd[0],sizeof lcd[0]);
+    memset(lcd_row0,0,sizeof lcd_row0);st7789_set_window(0,0,320,240);st7789_start_write();
+    for(unsigned y=0;y<240;++y)st7789_write_dma((const uint8_t *)lcd_row0,sizeof lcd_row0);
     st7789_end_write();st7789_set_backlight(255);
     audio_init();audio_service();busy_wait_us_32(1000);gpio_put(13,1);
     publish(&started,1);
