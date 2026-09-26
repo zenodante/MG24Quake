@@ -102,7 +102,7 @@ If assets are absent, it shows a palette pattern and a missing-QPAK message.
 This artifact has been compiled and checked on the host but **has not been
 flashed or observed on the physical board**.
 
-## Flash layout
+## Flash layout 
 
 | Physical offset | Purpose |
 |---|---|
