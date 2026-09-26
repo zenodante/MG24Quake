@@ -1,3 +1,8 @@
 *.bak
 *.o
 *.cscope_file_list
+.DS_Store
+build-rp2350*/
+build-host/
+assets-local/
+__pycache__/
