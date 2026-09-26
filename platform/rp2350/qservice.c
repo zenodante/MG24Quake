@@ -12,7 +12,7 @@
 #include <string.h>
 #include <assert.h>
 
-enum { FREE,DRAWING,READY,DISPLAYING, QUEUE_SIZE=32, LCD_ROWS=8 };
+enum { FREE,DRAWING,READY,DISPLAYING, QUEUE_SIZE=32, LCD_ROWS=1 };
 typedef struct {
     uint32_t state,sequence;
     uint8_t pixels[Q_FRAME_BYTES],palette[768];
