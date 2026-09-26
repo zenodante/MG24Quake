@@ -14,12 +14,12 @@
 
 enum { FREE,DRAWING,READY,DISPLAYING, QUEUE_SIZE=32, LCD_ROWS=1 };
 typedef struct {
-    uint32_t state,sequence;
+    uint32_t state;
     uint8_t pixels[Q_FRAME_BYTES],palette[768];
 } frame_t;
 typedef struct { unsigned op,channel,left,right; qsound_t sound; uint32_t fence; } sound_cmd_t;
-static frame_t frames[2];
-static uint32_t submitted,started,input_write,input_read,input_held,sound_write,sound_read,sound_fence;
+static frame_t frame;
+static uint32_t started,input_write,input_read,input_held,sound_write,sound_read,sound_fence;
 static qinput_event_t input_queue[QUEUE_SIZE];
 static sound_cmd_t sound_queue[QUEUE_SIZE];
 static qservice_stats_t stats;
@@ -34,7 +34,6 @@ static bool audio_ever_started;
 static qwstpad_t pad;
 static bool pad_ready;
 static uint32_t next_input,next_pad_retry;
-static int active_frame=-1;
 static unsigned lcd_y,lcd_slot;
 static uint32_t load(const uint32_t *p) { return __atomic_load_n(p,__ATOMIC_ACQUIRE); }
 static void publish(uint32_t *p,uint32_t v) { __atomic_store_n(p,v,__ATOMIC_RELEASE); }
@@ -117,25 +116,21 @@ static void input_service(void) {
     }
 }
 static void video_service(void) {
-    if(active_frame<0) {
-        int chosen=-1;
-        for(unsigned i=0;i<2;++i)if(load(&frames[i].state)==READY &&
-            (chosen<0 || (int32_t)(frames[i].sequence-frames[chosen].sequence)<0))chosen=(int)i;
-        if(chosen<0)return;
-        active_frame=chosen;publish(&frames[chosen].state,DISPLAYING);
-        const uint8_t *p=frames[chosen].palette;
+    if(load(&frame.state)==READY) {
+        publish(&frame.state,DISPLAYING);
+        const uint8_t *p=frame.palette;
         for(unsigned i=0;i<256;++i) {
             uint16_t color=((p[0]>>3)<<11)|((p[1]>>2)<<5)|(p[2]>>3);p+=3;
             lut[i]=(color>>8)|(color<<8);
         }
         lcd_y=0;lcd_slot=0;st7789_set_window(0,20,Q_WIDTH,Q_HEIGHT);st7789_start_write();
     }
-    if(st7789_dma_busy())return;
+    if(load(&frame.state)!=DISPLAYING || st7789_dma_busy())return;
     if(lcd_y==Q_HEIGHT) {
-        st7789_end_write();publish(&frames[active_frame].state,FREE);active_frame=-1;
+        st7789_end_write();publish(&frame.state,FREE);
         counter(&stats.frames);return;
     }
-    const uint8_t *src=frames[active_frame].pixels+lcd_y*Q_WIDTH;
+    const uint8_t *src=frame.pixels+lcd_y*Q_WIDTH;
     uint16_t *dst=lcd_slot?lcd_row1:lcd_row0;
     for(unsigned i=0;i<Q_WIDTH;++i)dst[i]=lut[src[i]];
     st7789_write_dma((const uint8_t *)dst,sizeof lcd_row0);
@@ -162,15 +157,13 @@ bool qservice_start(void) {
     return true;
 }
 uint8_t *qservice_frame_acquire(unsigned *slot) {
-    for(unsigned i=0;i<2;++i)if(load(&frames[i].state)==FREE) {
-        publish(&frames[i].state,DRAWING);*slot=i;return frames[i].pixels;
-    }
-    return NULL;
+    if(load(&frame.state)!=FREE)return NULL;
+    publish(&frame.state,DRAWING);*slot=0;return frame.pixels;
 }
 void qservice_frame_submit(unsigned slot,const uint8_t palette[768]) {
-    assert(slot<2 && load(&frames[slot].state)==DRAWING);
-    memcpy(frames[slot].palette,palette,768);frames[slot].sequence=submitted++;
-    publish(&frames[slot].state,READY);
+    assert(slot==0 && load(&frame.state)==DRAWING);
+    memcpy(frame.palette,palette,768);
+    publish(&frame.state,READY);
 }
 bool qservice_input_pop(qinput_event_t *e) {
     uint32_t r=load(&input_read);if(r==load(&input_write))return false;
