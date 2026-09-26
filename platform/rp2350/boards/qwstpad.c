@@ -1,4 +1,4 @@
-/* RP2350 Quake adaptation: bounded I2C transactions keep audio service responsive. */
+/* Kept in sync with the proven p8 RP2350 QwSTPad transport. */
 #include "qwstpad.h"
 
 enum {
@@ -27,16 +27,16 @@ static const uint8_t LED_BIT[QWSTPAD_NUM_LEDS] = {0x6, 0x7, 0x9, 0xA};
 static bool reg_write_u16(qwstpad_t *pad, uint8_t reg, uint16_t value) {
     if (!pad || !pad->i2c) return false;
     uint8_t buf[3] = {reg, (uint8_t)value, (uint8_t)(value >> 8)};
-    return i2c_write_timeout_us(pad->i2c, pad->address, buf, sizeof(buf), false, 500) == (int)sizeof(buf);
+    return i2c_write_blocking(pad->i2c, pad->address, buf, sizeof(buf), false) == (int)sizeof(buf);
 }
 
 static bool reg_read_u16(qwstpad_t *pad, uint8_t reg, uint16_t *value) {
     if (!pad || !pad->i2c || !value) return false;
     uint8_t data[2];
-    if (i2c_write_timeout_us(pad->i2c, pad->address, &reg, 1, true, 500) != 1) {
+    if (i2c_write_blocking(pad->i2c, pad->address, &reg, 1, true) != 1) {
         return false;
     }
-    if (i2c_read_timeout_us(pad->i2c, pad->address, data, sizeof(data), false, 500) != (int)sizeof(data)) {
+    if (i2c_read_blocking(pad->i2c, pad->address, data, sizeof(data), false) != (int)sizeof(data)) {
         return false;
     }
     *value = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
