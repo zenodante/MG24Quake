@@ -27,7 +27,7 @@ static qmix_t mixer;
 static uint16_t lcd_row0[Q_WIDTH],lcd_row1[Q_WIDTH],lut[256];
 static uint16_t audio[2][QMIX_BLOCK];
 static int audio_dma[2];
-static unsigned audio_slice;
+static unsigned audio_slice,audio_channel;
 static volatile bool audio_queued[2];
 static unsigned next_audio;
 static bool audio_ever_started;
@@ -47,20 +47,24 @@ static void audio_irq(void) {
 }
 static void audio_init(void) {
     gpio_init(13);gpio_set_dir(13,GPIO_OUT);gpio_put(13,0);
-    gpio_set_function(12,GPIO_FUNC_PWM);audio_slice=pwm_gpio_to_slice_num(12);
+    gpio_set_function(12,GPIO_FUNC_PWM);
+    audio_slice=pwm_gpio_to_slice_num(12);audio_channel=pwm_gpio_to_channel(12);
     pwm_config cfg=pwm_get_default_config();pwm_config_set_wrap(&cfg,255);
     uint32_t den=QMIX_RATE*256u;
     uint32_t div16=(uint32_t)(((uint64_t)clock_get_hz(clk_sys)*16+den/2)/den);
     pwm_config_set_clkdiv_int_frac4(&cfg,div16>>4,div16&15);
     pwm_init(audio_slice,&cfg,false);pwm_set_gpio_level(12,128);
+    volatile uint16_t *compare=(volatile uint16_t *)&pwm_hw->slice[audio_slice].cc;
+    if(audio_channel==PWM_CHAN_B)++compare;
     for(unsigned i=0;i<2;++i)audio_dma[i]=dma_claim_unused_channel(true);
     for(unsigned i=0;i<2;++i) {
+        audio_queued[i]=false;
         dma_channel_config dc=dma_channel_get_default_config(audio_dma[i]);
         channel_config_set_transfer_data_size(&dc,DMA_SIZE_16);
         channel_config_set_read_increment(&dc,true);channel_config_set_write_increment(&dc,false);
         channel_config_set_dreq(&dc,pwm_get_dreq(audio_slice));
         channel_config_set_chain_to(&dc,audio_dma[i^1]);
-        dma_channel_configure(audio_dma[i],&dc,&pwm_hw->slice[audio_slice].cc,audio[i],0,false);
+        dma_channel_configure(audio_dma[i],&dc,(void *)compare,audio[i],0,false);
         dma_hw->ints0=1u<<audio_dma[i];dma_channel_set_irq0_enabled(audio_dma[i],true);
     }
     irq_set_exclusive_handler(DMA_IRQ_0,audio_irq);irq_set_enabled(DMA_IRQ_0,true);
