@@ -11,8 +11,8 @@ uint8_t *qservice_frame_acquire(unsigned *slot);
 void qservice_frame_submit(unsigned slot,const uint8_t palette[768]);
 uint16_t qservice_buttons(void);
 uint16_t qservice_buttons_pressed(void);
-/* false means queue full: caller must retry; commands are never silently lost.
- * Sound PCM pointers must remain valid until a stop/fence acknowledges them. */
+/* Mixer mutations are synchronized with core 1 using the same shared-mixer
+ * spin-lock model as p8. Sound PCM storage must remain valid while active. */
 bool qservice_sound_start(unsigned channel,const qsound_t *sound,unsigned left,unsigned right);
 bool qservice_sound_stop(unsigned channel);
 bool qservice_sound_stop_all(uint32_t fence);
