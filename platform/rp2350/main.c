@@ -45,18 +45,11 @@ int main(void) {
     }
     if(!qservice_start())panic("Service core failed to start");
     uint32_t next_frame=0,next_log=0,number=0;
-    uint16_t event_held=0;
     for(;;) {
-        qinput_event_t event;
-        while(qservice_input_pop(&event)) {
-            uint16_t pressed=event.held&~event_held;
-            if(pressed&1u)
-                while(!qservice_sound_start(0,have_sound?&sound:&test_sound,255,255))tight_loop_contents();
-            if(pressed&2u)while(!qservice_sound_stop(0))tight_loop_contents();
-            if(pressed&4u)
-                while(!qservice_sound_start(0,&test_sound,255,255))tight_loop_contents();
-            event_held=event.held;
-        }
+        uint16_t pressed=qservice_buttons_pressed();
+        if(pressed&1u)qservice_sound_start(0,have_sound?&sound:&test_sound,255,255);
+        if(pressed&2u)qservice_sound_stop(0);
+        if(pressed&4u)qservice_sound_start(0,&test_sound,255,255);
         uint16_t held=qservice_buttons();
         uint32_t now=time_us_32();
         if((int32_t)(now-next_frame)>=0) {
