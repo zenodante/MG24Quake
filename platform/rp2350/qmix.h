@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-enum { QMIX_CHANNELS=8, QMIX_RATE=22050, QMIX_BLOCK=256 };
+enum { QMIX_CHANNELS=8, QMIX_RATE=22050, QMIX_BLOCK=128 };
 typedef struct {
     const uint8_t *pcm;
     uint32_t length, rate;
