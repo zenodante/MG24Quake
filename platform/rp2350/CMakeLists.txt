@@ -28,7 +28,7 @@ add_executable(quake_rp2350_bringup
 # directory first; compiler/CMSIS vocabulary must therefore not depend on
 # header include order or on accidentally reaching an EFR32 main.h.
 add_library(quake_rp2350_engine_phase1 OBJECT
-    qengine_probe.c qsys.c qpak.c qfiles.c
+    qengine_probe.c qsys.c qpak.c qfiles.c qlevel_arena.c
     ../../QuakeMG24/Quake/model.c)
 target_include_directories(quake_rp2350_engine_phase1 BEFORE PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
