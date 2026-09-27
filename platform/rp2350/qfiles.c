@@ -21,6 +21,23 @@ void qfiles_mount(const qpak_t *pak) {
     memset(handles,0,sizeof handles);
     memset(&cache,0,sizeof cache);
 }
+
+void *getExtMemPointerToFileInPak(const char *path,unsigned int *size) {
+    qpak_file_t file;
+    if (size) *size=0;
+    if (!mounted || !path || !qpak_find(mounted,path,&file))
+        return NULL;
+
+    /* Production QXIP entries are contiguous immutable XIP payloads.  model.c
+     * deliberately keeps the returned pointer and performs relative lump/mip
+     * addressing from it, so a temporary read cache would be incorrect here. */
+    const uint8_t *ptr=qpak_map(mounted,&file,0,file.size);
+    if (!ptr)
+        return NULL;
+    if (size) *size=file.size;
+    return (void *)(uintptr_t)ptr;
+}
+
 int Sys_FileOpenRead(char *path,int *handle) {
     if (!handle) return -1;
     *handle=-1;
