@@ -12,8 +12,27 @@ include("${PICO_SDK_PATH}/external/pico_sdk_import.cmake")
 project(quake_rp2350 C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 pico_sdk_init()
-add_executable(quake_rp2350_bringup main.c qpak.c qbsp.c qrender.c qcollision.c qfiles.c qmix.c qservice.c
+
+set(QRP_PLATFORM_SOURCES
+    qpak.c qfiles.c qmix.c qservice.c
     boards/st7789.c boards/qwstpad.c ../../QuakeMG24/src/font8x8.c)
+
+# Existing hardware/resource diagnostic.  Keep this while Phase 1 brings the
+# real MG24 engine up; qrender/qbsp/qcollision are not the production renderer.
+add_executable(quake_rp2350_bringup
+    main.c qbsp.c qrender.c qcollision.c ${QRP_PLATFORM_SOURCES})
+
+# Phase-1 engine integration checkpoint.  This compiles against the actual
+# MG24 Quake engine ABI and the RP2350 file/XIP + core-1 service layer without
+# creating another renderer.  Engine source groups are added here incrementally
+# as EFR32-only dependencies are removed.
+add_library(quake_rp2350_engine_phase1 OBJECT
+    qengine_probe.c qpak.c qfiles.c)
+target_include_directories(quake_rp2350_engine_phase1 PRIVATE
+    . boards ../../QuakeMG24/src ../../QuakeMG24/Quake)
+target_compile_options(quake_rp2350_engine_phase1 PRIVATE -Wall -Wextra -O2)
+target_compile_definitions(quake_rp2350_engine_phase1 PRIVATE QUAKE_RP2350=1)
+
 # Limit linkable Flash without changing the board's physical 16 MiB capacity.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/flash_layout.h")
 file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/flash_layout.h" firmware_limit
