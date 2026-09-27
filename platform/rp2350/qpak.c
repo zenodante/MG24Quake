@@ -54,10 +54,18 @@ static bool qxip_open(qpak_t *pak,const uint8_t *p,size_t available) {
        texture_count,image_bytes. Directory entries are <name_off,kind,off,size>. */
     if (available < 40 || memcmp(p,"QXIP",4) || rd32(p+4)!=1) return false;
     uint32_t files=rd32(p+8), strings=rd32(p+12), directory=rd32(p+16);
-    uint32_t data=rd32(p+20), tex=rd32(p+24), tex_bytes=rd32(p+28), bytes=rd32(p+36);
+    uint32_t data=rd32(p+20), tex=rd32(p+24), tex_bytes=rd32(p+28);
+    uint32_t texture_count=rd32(p+32), bytes=rd32(p+36);
     if (bytes<40 || bytes>available || bytes>QPAK_ASSET_CAPACITY || strings<40 ||
         directory<strings || files>(bytes-directory)/16 || !range(directory,(size_t)files*16,bytes) ||
         data<directory+(uint64_t)files*16 || data>bytes || !range(tex,tex_bytes,bytes)) return false;
+    if (tex_bytes<12 || memcmp(p+tex,"TEX1",4) || rd32(p+tex+4)!=texture_count ||
+        rd32(p+tex+8)!=12 || texture_count>(tex_bytes-12)/40) return false;
+    for(uint32_t i=0;i<texture_count;++i){
+        const uint8_t *te=p+tex+12+i*40;
+        uint32_t off=rd32(te),size=rd32(te+4);
+        if(off<12+texture_count*40 || !range(off,size,tex_bytes))return false;
+    }
     for(uint32_t i=0;i<files;++i){
         const uint8_t *e=p+directory+i*16;
         uint32_t noff=rd32(e),kind=rd32(e+4),off=rd32(e+8),size=rd32(e+12);
@@ -66,7 +74,8 @@ static bool qxip_open(qpak_t *pak,const uint8_t *p,size_t available) {
         if(!memchr(name,0,directory-(strings+noff)))return false;
     }
     *pak=(qpak_t){.image=p,.bytes=bytes,.files=files,.directory=directory,.payload=data,
-        .strings=strings,.texture_store=tex,.texture_store_bytes=tex_bytes,.format=QPAK_FORMAT_QXIP1};
+        .strings=strings,.texture_store=tex,.texture_store_bytes=tex_bytes,
+        .texture_count=texture_count,.format=QPAK_FORMAT_QXIP1};
     return true;
 }
 bool qpak_open(qpak_t *pak, const void *image, size_t available) {
@@ -179,4 +188,45 @@ bool qpak_read(const qpak_t *pak,const qpak_file_t *f,qpak_cache_t *cache,
         memcpy(out,src+within,n); out+=n; offset+=(uint32_t)n; length-=n;
     }
     return true;
+}
+
+bool qpak_level_open(const qpak_t *pak,const qpak_file_t *file,qpak_level_t *level) {
+    if(!pak||!file||!level||pak->format!=QPAK_FORMAT_QXIP1||file->kind!=1||!file->direct||file->size<68)
+        return false;
+    const uint8_t *p=pak->image+file->direct_offset;
+    if(memcmp(p,"LVL1",4))return false;
+    uint32_t texture_count=rd32(p+4);
+    uint32_t off[QXIP_BSP_LUMPS];
+    for(unsigned i=0;i<QXIP_BSP_LUMPS;++i)off[i]=rd32(p+8+i*4);
+    for(unsigned i=0;i<QXIP_BSP_LUMPS;++i){
+        if(off[i]<68||off[i]>file->size||(i&&off[i]<off[i-1]))return false;
+    }
+    *level=(qpak_level_t){.base=p,.bytes=file->size,.texture_count=texture_count};
+    for(unsigned i=0;i<QXIP_BSP_LUMPS;++i){
+        level->lump_offset[i]=off[i];
+        level->lump_size[i]=(i+1<QXIP_BSP_LUMPS?off[i+1]:file->size)-off[i];
+    }
+    if(level->lump_size[2] < 4u + (uint64_t)texture_count*4u || rd32(p+off[2])!=texture_count)
+        return false;
+    return true;
+}
+const uint8_t *qpak_level_lump(const qpak_level_t *level,unsigned lump,size_t *bytes) {
+    if(!level||!level->base||lump>=QXIP_BSP_LUMPS)return NULL;
+    if(bytes)*bytes=level->lump_size[lump];
+    return level->base+level->lump_offset[lump];
+}
+bool qpak_level_texture_id(const qpak_level_t *level,unsigned index,uint32_t *texture_id) {
+    if(!level||!texture_id||index>=level->texture_count)return false;
+    const uint8_t *ids=level->base+level->lump_offset[2]+4;
+    *texture_id=rd32(ids+index*4);
+    return true;
+}
+const uint8_t *qpak_texture(const qpak_t *pak,uint32_t texture_id,size_t *bytes) {
+    if(!pak||pak->format!=QPAK_FORMAT_QXIP1||texture_id>=pak->texture_count)return NULL;
+    const uint8_t *store=pak->image+pak->texture_store;
+    const uint8_t *entry=store+12+texture_id*40;
+    uint32_t off=rd32(entry),size=rd32(entry+4);
+    if(!range(off,size,pak->texture_store_bytes))return NULL;
+    if(bytes)*bytes=size;
+    return store+off;
 }
