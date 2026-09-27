@@ -1,24 +1,98 @@
 # RP2350 Quake port plan
 
-Reference: [next-hack, original MG24 Quake port, 2024-09-22](https://next-hack.com/index.php/2024/09/22/quake-port-to-sparkfun-and-arduino-nano-matter-boards-using-only-276-kB-ram/).
+Reference: next-hack's original MG24 Quake port (2024-09-22).
 
-Central rule: **MG24 is the engine/renderer baseline, not the RP2350 hardware baseline.** Keep the author's Quake algorithm and performance work; replace hardware and memory compromises that existed only because MG24 had 276 kB RAM and external SPI storage.
+Central rule: **MG24 is the engine/renderer baseline, not the RP2350 hardware or storage baseline.** Keep the author's Quake algorithms and measured renderer optimizations; replace compromises that existed because MG24 had 276 kB RAM, internal-flash staging and external SPI storage.
 
 ## Fixed RP2350 architecture
 
-Core 0 runs Quake/MG24. One 320x200 8-bit indexed framebuffer is shared through an ownership barrier. Core 1 owns the validated framebuffer-to-RGB565 conversion, two independent 320-pixel one-row ping-pong buffers, LCD DMA, input polling and audio mixing/output. Do not reintroduce a second full framebuffer or multi-row staging buffers. qservice and board drivers remain structurally unchanged unless measured integration exposes a defect; qmix now additionally decodes the selected QAD1 source format.
+Core 0 runs Quake/MG24. One 320x200 8-bit indexed framebuffer is shared through an ownership barrier. Core 1 owns the validated framebuffer-to-RGB565 conversion, two independent 320-pixel one-row ping-pong buffers, LCD DMA, input polling and audio mixing/output. Do not reintroduce a second full framebuffer or multi-row staging buffers. `qservice` and board drivers remain structurally unchanged unless measured integration exposes a defect; `qmix` additionally decodes QAD1 sound sources.
 
 ## Renderer decision
 
-Production uses the MG24 renderer paths, not the diagnostic qrender implementation. Preserve the original port's edge/surface/span rendering and measured CPU optimizations unless RP2350 profiling supports a change.
+Production uses the MG24 renderer paths, not the diagnostic `qrender` implementation. Preserve the original port's edge/surface/span rendering and measured CPU optimizations unless RP2350 profiling supports a change.
 
 ## RP2350 memory/storage policy
 
-The production resource model is **offline conversion -> immutable runtime-ready XIP image -> direct addressing**. SRAM is reserved for mutable/runtime-generated state, engine working sets, and immutable hot subsets only when profiling justifies a copy.
+The production resource model is:
 
-The 16 MiB flash must never be repopulated at level change. Useful MG24 format conversion moves to host tools; MG24 storage-placement work is discarded. On RP2350, external-memory style reads mean memory-mapped XIP.
+**original PAK -> host conversion/pre-expansion -> immutable runtime-ready QXIP -> direct XIP addressing**.
 
-**RP2350 does not use the MG24 packed/combined node+leaf storage format.** Analysis showed approximately +0.03 MiB across the shareware BSP set rather than a saving. Native BSP nodes and leaves therefore remain in XIP unless profiling later motivates an RP2350-specific representation.
+SRAM is reserved for state that actually changes while the game runs, temporary/working data, stacks, frame/audio state, and immutable hot subsets only when profiling proves that an SRAM copy is worthwhile.
+
+The 16 MiB flash must never be repopulated at level change. Deterministic MG24 load-time conversions should be moved to the host converter instead of being reproduced by allocating SRAM or emulating MG24 internal-flash writes. On RP2350, external-memory style reads normally mean memory-mapped XIP.
+
+### Serialized IDs are not compressed runtime pointers
+
+RP2350 should not preserve MG24's 16-bit SRAM-pointer/offset tricks merely to save runtime structure bytes. Normal mutable runtime objects may use native 32-bit pointers.
+
+This does **not** mean QXIP must contain absolute 32-bit XIP pointers. Immutable resource images should prefer stable indices/relative offsets where appropriate. BSP indices and offsets are serialized resource relationships, not MG24-style compressed SRAM pointers. Runtime accessors can resolve these directly against XIP bases without copying the referenced objects to SRAM.
+
+### MG24 packed node/leaf format remains rejected
+
+RP2350 does not use the MG24 packed/combined node+leaf storage format. Earlier analysis showed approximately +0.03 MiB across the shareware BSP set rather than a saving. This decision does not require keeping the original BSP node/leaf byte layout forever: the host converter may emit an RP2350-specific, runtime-ready immutable node/leaf topology if that removes load-time work without increasing the asset budget unacceptably.
+
+## Host-preexpanded level representation
+
+The current direction is to treat much of `Mod_LoadBrushModel()` as a **build-time converter specification**, not as work that RP2350 must repeat every time a level is loaded.
+
+The original MG24 loader frequently performs deterministic conversion and then calls `storeToInternalFlash()`. That storage choice made sense for MG24's external-storage architecture, but it does not imply that the resulting data is mutable game state. On RP2350, deterministic immutable results should normally be emitted directly into QXIP by the Python tools.
+
+Candidate immutable/XIP data includes:
+
+- texture pixels and mip levels;
+- lighting data;
+- visibility data;
+- vertices;
+- edges and surfedges;
+- planes;
+- converted texinfo;
+- node/leaf topology and bounding information;
+- marksurface relationships;
+- clipnodes and other deterministic collision topology;
+- submodel definitions;
+- entity source text;
+- texture-animation topology;
+- immutable portions of surfaces/faces.
+
+These candidates must be verified against actual engine writes before their final QXIP layout is frozen. In particular, Quake surface/leaf structures mix immutable map description with fields such as visibility/dynamic-light/frame state that may change during rendering. Those structures should be split conceptually, and if useful physically, into an immutable XIP portion plus a compact mutable SRAM sidecar rather than copying a full structure per surface/leaf into SRAM.
+
+Examples of state that belongs in SRAM include player/entity runtime state, positions and velocities, edicts, dynamic-light state, particles, audio-channel/ADPCM decoder state, renderer frame/visibility working data, mutable per-surface/per-leaf frame state, framebuffer/line buffers, stacks and temporary workspaces.
+
+### Per-level mapping generated by the converter
+
+Global texture dedup changes a level's original local texture numbering into references to the shared global texture table. The host converter should therefore generate the mapping explicitly instead of requiring complicated runtime reconstruction.
+
+The preferred design is a generated level descriptor plus mapping data. A small generated C header may define IDs, counts, layouts and descriptor declarations, while large mapping arrays should normally live in QXIP so they do not consume the 1 MiB firmware partition. Conceptually each level descriptor can contain fields such as:
+
+```c
+typedef struct {
+    uint32_t bsp_offset;
+    uint32_t bsp_size;
+    uint32_t texture_map_offset;
+    uint16_t texture_count;
+    uint32_t runtime_data_offset;
+    uint32_t runtime_data_size;
+} qlevel_asset_t;
+```
+
+The converter can emit relationships such as local texture index -> global texture ID, surface -> converted texinfo ID, surface -> plane ID, node -> child node/leaf IDs, marksurface -> surface ID, and similar deterministic mappings. These remain resource IDs/offsets in flash; they do not require MG24's compressed-pointer ABI.
+
+The long-term goal is that RP2350 level loading becomes mostly **map/bind immutable QXIP data + initialize compact mutable sidecars**, rather than parse BSP -> transform -> allocate/copy hundreds of kilobytes -> play.
+
+## Current model-loader finding
+
+The real MG24 model-loader probe now mounts QXIP, maps `maps/start.bsp`, initializes the Phase-1 level arena, calls the real `Mod_Init()` and enters `Mod_ForName()`/`Mod_LoadBrushModel()`.
+
+With the temporary 192 KiB emulation arena, `start.bsp` reaches:
+
+```text
+used=195028 request=2048 capacity=196608
+```
+
+and then overflows. Raising the diagnostic arena lets the loader proceed farther into texinfo/surface processing. This measurement is **not** evidence that an RP2350 level intrinsically needs about 200 KiB of mutable SRAM. It measures the current MG24-style load path, which places substantial deterministic map data into the emulated internal-flash/SRAM arena. Therefore we should not size the production arena from this number yet.
+
+The earlier plan to simply increase the arena and profile every map is deferred until the host-preexpanded representation is implemented far enough to measure the SRAM that is genuinely mutable or performance-critical. All shareware maps should still be profiled before final SRAM budgets are frozen, but against the intended RP2350 representation rather than the MG24 storage-emulation path.
 
 ## Sound storage and playback
 
@@ -30,11 +104,11 @@ QAD1 uses **256 decoded samples per independent block**. Each block contains a 1
 
 The runtime decoder is implemented in `qmix.c`. `qsound_qad1()` validates the complete QAD1 structure before playback, including magic, block size, loop bounds, step index, block counts and file bounds. `qsound_open()` auto-detects QAD1 while retaining the original WAV/PCM parser for diagnostics.
 
-Core 1 decodes QAD1 **incrementally from immutable XIP**. Each mixer channel carries only predictor/index/current decoded position state; there is no 256-sample decode buffer and no whole-sound SRAM copy. Normal sequential playback performs one IMA nibble decode only when the 11025-Hz source advances. Because PWM/mixer output is 22050 Hz, the decoded source sample is naturally held for two output samples. Crossing a QAD1 block invalidates the channel decoder state and initializes from the next independent block header.
+Core 1 decodes QAD1 **incrementally from immutable XIP**. Each mixer channel carries only predictor/index/current decoded-position state; there is no 256-sample decode buffer and no whole-sound SRAM copy. Normal sequential playback performs one IMA nibble decode only when the 11025-Hz source advances. Because PWM/mixer output is 22050 Hz, the decoded source sample is naturally held for two output samples.
 
-Looping or a non-sequential position rebuilds decoder state from the containing independent block and decodes at most 255 nibbles to reach the requested position. This makes arbitrary loop points work without a large seek table or SRAM cache. Normal sequential playback does not repeatedly seek or re-decode a block.
+Looping or a non-sequential position rebuilds decoder state from the containing independent block and decodes at most 255 nibbles to reach the requested position. Normal sequential playback does not repeatedly seek or re-decode a block.
 
-Host tests cover QAD1 validation, incremental decoding, 11025->22050 sample-hold timing, invalid metadata rejection and a loop beginning inside a block. **Hardware playback has now been validated:** the converted shotgun sound plays correctly from the combined QXIP image through XIP -> QAD1 decoder -> Core-1 mixer -> DMA/PWM -> speaker.
+Host tests cover QAD1 validation, incremental decoding, 11025->22050 sample-hold timing, invalid metadata rejection and a loop beginning inside a block. **Hardware playback is validated:** the converted shotgun sound plays correctly from QXIP through XIP -> QAD1 decoder -> Core-1 mixer -> DMA/PWM -> speaker.
 
 ## Host tools and current Flash status
 
@@ -52,7 +126,7 @@ Current measured shareware footprint after implemented conversions:
 - asset budget: **15.00 MiB**;
 - measured asset headroom: **about +0.54 MiB**.
 
-No lightmap compression is required for capacity at this stage.
+The planned level pre-expansion may change this footprint. Any new immutable runtime representation must be measured against the current ~0.54 MiB asset headroom; duplicated original/expanded structures should be removed where safe rather than blindly added. No lightmap compression is required at the current stage, but capacity must be rechecked after the new level representation is generated.
 
 ## Reproducible firmware + QXIP build
 
@@ -66,18 +140,18 @@ After CMake has been configured with the desired local Pico SDK/toolchain paths:
 cmake --build build_rp2350 -j
 ```
 
-This produces the firmware-only files including:
+This produces firmware-only files including:
 
 ```text
 build_rp2350/quake_rp2350_bringup.uf2
 build_rp2350/quake_rp2350_bringup.bin
 ```
 
-The firmware UF2 writes only the reserved first 1 MiB firmware region. During engine development this is the image that should normally be rebuilt and reflashed repeatedly.
+The firmware UF2 writes only the reserved first 1 MiB firmware region. During engine development this is normally the image rebuilt and reflashed repeatedly.
 
 ### 2. Regenerate converted QXIP assets
 
-Always use the complete Python pipeline rather than invoking `xip_image_builder.py` directly on the original PAK. This ensures alias MDL conversion, QAD1 sound conversion, BSP-compatible level generation and global texture dedup are all applied:
+Always use the complete Python pipeline rather than invoking `xip_image_builder.py` directly on the original PAK:
 
 ```sh
 python3 Tools/RP2350Pack/run_pipeline.py \
@@ -92,7 +166,7 @@ The runtime asset image is:
 build_rp2350/quake-assets.qxip
 ```
 
-For the current shareware set the expected report is approximately 14.46 MiB QXIP, 15.00 MiB asset budget and +0.54 MiB headroom. The current measured image is 15,161,212 bytes with 339 files, 21 levels, 396 unique global textures and zero sound-conversion errors.
+For the currently implemented conversion set the measured image is 15,161,212 bytes with 339 files, 21 levels, 396 unique global textures and zero sound-conversion errors. These figures are a baseline and will need updating when level pre-expansion/mapping generation is added.
 
 ### 3. Generate the independent asset UF2
 
@@ -102,21 +176,9 @@ python3 Tools/RP2350Pack/make_asset_uf2.py \
   build_rp2350/quake-assets.uf2
 ```
 
-`quake-assets.uf2` contains **assets only**. Its first payload byte is written at the asset partition start, normally flash/XIP address `0x10100000`, corresponding to the **1 MiB offset** after firmware. The script validates QXIP1, the TEX1 store and the save-partition boundary. It does not write the firmware partition and does not write the persistent save partition.
+`quake-assets.uf2` contains **assets only**. Its first payload byte is written at the asset partition start, normally flash/XIP address `0x10100000`, corresponding to the **1 MiB offset** after firmware. The script validates QXIP1, the TEX1 store and the save-partition boundary. It does not write the firmware partition or persistent save partition.
 
-Flash this asset image whenever the converted resources or QXIP layout change:
-
-```text
-build_rp2350/quake-assets.uf2
-```
-
-After the current asset image has been flashed once, ordinary engine-code iterations require only rebuilding and flashing:
-
-```text
-build_rp2350/quake_rp2350_bringup.uf2
-```
-
-This avoids rewriting approximately 14.46 MiB of immutable resources for every firmware change.
+After the current asset image has been flashed once, ordinary engine-code iterations require only rebuilding and flashing `quake_rp2350_bringup.uf2`. Reflash `quake-assets.uf2` whenever converted resources or the QXIP layout change.
 
 ### 4. Optional combined UF2
 
@@ -129,7 +191,7 @@ python3 Tools/RP2350Pack/make_uf2.py \
   build_rp2350/quake_rp2350_full.uf2
 ```
 
-The combined image writes firmware plus the immutable asset partition while leaving the save partition untouched. It is no longer the preferred image for routine firmware-only development.
+The combined image writes firmware plus the immutable asset partition while leaving the save partition untouched. It is not the preferred image for routine firmware-only development.
 
 ## Migration phases and status
 
@@ -137,59 +199,61 @@ The combined image writes firmware plus the immutable asset partition while leav
 
 Core-1 display/input/audio scheduling, DMA/ring structure and input structure remain the known-good platform layer. QAD1 decoding was added at the mixer source level without changing the Core-1 service architecture.
 
-### Phase 1 - build the real MG24 engine on RP2350: IN PROGRESS
+### Phase 1 - real MG24 engine + RP2350 resource architecture: IN PROGRESS
 
-Goal: compile the real MG24 engine against a thin RP2350 HAL, initialize it, and load `start` from immutable XIP with no level-time flash programming.
+Goal: compile the real MG24 engine against a thin RP2350 HAL and make its immutable model/map data directly usable from host-generated QXIP, with no level-time flash programming and minimal SRAM construction.
 
 Completed checkpoints:
 
 1. RP2350 Phase-1 engine/ABI targets and read-only file/system boundaries exist.
-2. Real MG24 `model.c` now compiles successfully for the RP2350 Phase-1 engine target through a forced `qengine_compat.h` compatibility layer; the engine no longer needs Silicon Labs generated headers merely to compile.
-3. Immutable resource placement was corrected to offline conversion plus direct XIP addressing rather than a generic SRAM arena.
-4. The Python host converter replaces the host-ABI-dependent C conversion path.
-5. Python alias-MDL conversion saves about 0.50 MiB on the shareware set.
-6. QXIP global texture extraction produces a real 1.15 MiB texture saving.
-7. MG24 packed node/leaf storage was measured and rejected; native BSP nodes/leaves are retained.
-8. QAD1 11025-Hz block IMA ADPCM conversion is implemented and measured at about 1.38 MiB for the shareware sound set.
-9. **QAD1 runtime decoding is implemented and hardware validated in the Core-1 mixer path**, including block validation, incremental decode, block transitions and arbitrary loop-point seek/rebuild. PCM remains supported for diagnostics.
-10. QXIP1 is connected to the runtime asset/file interface. Ordinary files are mapped directly from XIP, and actual shotgun playback from converted QXIP/QAD1 assets works on RP2350 hardware.
-11. QXIP exposes zero-copy level lump and global TEX1 lookup. The host builder now emits BSP-compatible level texture directories whose relative offsets can point directly into the shared global TEX1 store, allowing the original MG24 texture pointer arithmetic to remain usable without SRAM texture copies.
-12. The regenerated BSP-compatible QXIP asset image is **15,161,212 bytes (14.46 MiB)**, below the **15.00 MiB** asset budget with about **0.54 MiB headroom**.
-13. Resource-capacity work is sufficient for Phase 1; lightmap compression is deferred.
-14. The real MG24 model file ABI now resolves files through the RP2350 QXIP mapping layer, so `Mod_LoadModel()` can receive a direct XIP pointer rather than an SRAM/file-cache copy.
-15. Firmware and immutable assets can now be flashed independently: `quake-assets.uf2` starts at the 1 MiB asset partition, while routine firmware iterations update only the firmware UF2.
+2. Real MG24 `model.c` compiles for the RP2350 Phase-1 target without Silicon Labs generated headers.
+3. The Python host converter replaces the host-ABI-dependent C conversion path.
+4. Python alias-MDL conversion saves about 0.50 MiB on the shareware set.
+5. QXIP global texture extraction produces a real 1.15 MiB texture saving.
+6. MG24 packed node/leaf storage was measured and rejected.
+7. QAD1 11025-Hz block IMA ADPCM conversion is implemented at about 1.38 MiB for the shareware sound set.
+8. QAD1 runtime decoding is implemented and hardware validated in the Core-1 mixer path.
+9. QXIP1 is connected to the runtime asset/file interface; ordinary files are mapped directly from XIP.
+10. QXIP exposes zero-copy level lump and global TEX1 lookup, and the host builder emits BSP-compatible level texture directories that can reference the shared global TEX1 store.
+11. The current QXIP asset image is **15,161,212 bytes (14.46 MiB)**, below the current **15.00 MiB** asset budget by about **0.54 MiB**.
+12. The real MG24 model file ABI resolves files through the RP2350 QXIP mapping layer, so `Mod_LoadModel()` receives a direct XIP pointer.
+13. Firmware and immutable assets can be flashed independently.
+14. The real runtime probe reaches `Mod_ForName()`/`Mod_LoadBrushModel()` on `start.bsp`. The 192 KiB diagnostic level arena overflows at `used=195028 request=2048`, proving that the remaining MG24 load path constructs a substantial amount of level data rather than merely binding existing XIP resources.
+15. Review of the loader shows that many `storeToInternalFlash()` products are deterministic immutable map structures. The port direction is therefore changed from enlarging an emulated MG24 level arena to **pre-expanding suitable level structures in the Python converter and keeping them in QXIP**.
 
 Immediate next work:
 
-1. Turn the current Phase-1 compile probe into a **runtime model-loader probe** that mounts QXIP, calls `Mod_Init()` and loads `maps/start.bsp` through `Mod_ForName()` / `Mod_LoadModel()` / `Mod_LoadBrushModel()`.
-2. Add narrow serial checkpoints around the real brush-model loader so the first remaining MG24 platform/storage assumption can be identified on hardware rather than guessed in advance.
-3. Validate that the original MG24 `Mod_LoadTextures()` follows the generated cross-QXIP relative `dataofs[]` directly into TEX1 and that all bounds/pointer assumptions remain valid on RP2350.
-4. Remove any remaining runtime flash-programming dependency actually encountered on the real loading path; do not pre-emptively rewrite engine logic that is already portable.
-5. Continue MG24 engine source integration and profile SRAM/XIP hot paths.
-6. Measure final linked firmware size against the 1.00 MiB reservation.
+1. Extend the Python BSP/QXIP converter with a per-level analysis report matching the important `Mod_LoadBrushModel()` outputs and accounting for their byte cost.
+2. Generate explicit per-level local-texture -> global-texture mappings and a stable level descriptor format. Keep large mapping arrays in QXIP; generate a small C header only for IDs/layout declarations needed by firmware.
+3. Classify each brush-model structure as immutable-XIP, mutable-SRAM sidecar, temporary load data, or optional hot SRAM cache. Verify the classification against actual engine writes.
+4. Move deterministic conversions such as converted texinfo, node/leaf topology, collision topology and other safe loader products to the host side incrementally. Do not retain both original and expanded forms when one can safely replace the other.
+5. Split mixed structures such as surfaces/leaves where immutable topology currently shares a struct with per-frame visibility/dynamic-light state.
+6. Replace the RP2350 load path for converted levels with descriptor/map binding plus initialization of compact mutable sidecars. Keep the old MG24 loader probe as a reference/validation path while the new representation is brought up.
+7. Re-run `start.bsp`, then profile **all shareware maps** using the intended RP2350 representation to determine the true worst-case mutable SRAM requirement and any XIP-hot data worth caching.
+8. Re-measure QXIP size after each pre-expansion step against the 15 MiB asset partition and measure final linked firmware size against the 1 MiB firmware reservation.
 
-Phase 1 is not complete until the real engine links and `start` loads through the production XIP path.
+Phase 1 is not complete until `start` can be bound/loaded through the production QXIP representation and the real engine can consume it without MG24-style level-time flash staging.
 
 ### Phase 2 - restore MG24 world rendering: NOT STARTED
 
-Bring up BSP/PVS -> edge -> surface -> span rendering into the single indexed framebuffer and hand completed frames to unchanged Core 1.
+Bring up BSP/PVS -> edge -> surface -> span rendering into the single indexed framebuffer and hand completed frames to unchanged Core 1. Adapt renderer access to immutable XIP structures plus compact mutable sidecars rather than forcing the old combined MG24 structures into SRAM.
 
 ### Phase 3 - model/collision/game integration: NOT STARTED
 
-Restore entities, alias models, sprites, particles, sky/turbulence, dynamic lighting, collision and gameplay using the MG24-derived paths.
+Restore entities, alias models, sprites, particles, sky/turbulence, dynamic lighting, collision and gameplay using the MG24-derived algorithms and the RP2350 resource representation.
 
-### Phase 4 - proven host-side hot formats: IN PROGRESS
+### Phase 4 - host-side runtime formats: IN PROGRESS
 
-Alias MDL conversion, QXIP global texture dedup and QAD1 block IMA ADPCM are host-side transformations selected from measured RP2350 benefit. MG24 node/leaf packing is explicitly excluded. QAD1 now has both host encoder and runtime incremental decoder with successful hardware playback from QXIP.
+Alias MDL conversion, QXIP global texture dedup and QAD1 block IMA ADPCM are implemented host-side transformations selected from measured RP2350 benefit. Level runtime pre-expansion and per-level mapping generation are the next host-side format work. MG24 node/leaf packing remains explicitly excluded.
 
 ### Phase 5 - spend extra SRAM for speed: NOT STARTED
 
-Measure linker/runtime high-water use and XIP-sensitive paths, then enlarge caches/working sets within a documented budget.
+After immutable/mutable separation is working, measure linker/runtime high-water use and XIP-sensitive paths, then deliberately cache or copy measured-hot immutable subsets within a documented SRAM budget. Do not use spare SRAM merely to reproduce MG24 internal-flash staging.
 
 ### Phase 6 - RP2350 CPU optimization: NOT STARTED
 
-Profile the MG24 baseline first, then tune Cortex-M33 loops, compiler options, SRAM placement and XIP access with before/after measurements.
+Profile the MG24-derived baseline first, then tune Cortex-M33 loops, compiler options, SRAM placement and XIP access with before/after measurements.
 
 ## Completion criteria
 
-Production must run the MG24-derived engine/renderer, retain the validated Core-1 service structure, use one indexed framebuffer plus two one-row RGB565 buffers, directly address runtime-ready immutable resources from 16 MiB XIP without level-change flash writes, use QAD1 sounds directly from XIP with incremental Core-1 decoding, keep native BSP nodes/leaves, and spend SRAM only on mutable/working/measured-hot data.
+Production must run the MG24-derived engine/renderer, retain the validated Core-1 service structure, use one indexed framebuffer plus two one-row RGB565 buffers, directly address host-generated runtime-ready immutable resources from 16 MiB XIP without level-change flash writes, use QAD1 sounds directly from XIP with incremental Core-1 decoding, avoid MG24-only packed-pointer/storage compromises, and spend SRAM primarily on genuinely mutable state, working data and measured-hot caches. Final SRAM sizing must be validated across all shareware maps using the production RP2350 representation.
