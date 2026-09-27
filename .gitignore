@@ -8,3 +8,4 @@ assets-local/
 __pycache__/
 build_rp2350*/
 .vscode/
+build*/
