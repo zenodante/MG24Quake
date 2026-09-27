@@ -4,26 +4,30 @@
 Usage from repository root:
   python3 Tools/RP2350Pack/run_pipeline.py /path/to/pak0.pak
 
-The script:
-  1. builds the original author's MCUPackConverter with the host C compiler;
-  2. runs it on the shareware pak0.pak, preserving its proven MDL/BSP/sky/WAV
-     preprocessing;
-  3. runs build_assets.py on BOTH the original and converted PAK;
-  4. writes JSON reports and a compact comparison summary.
+The original MCUPackConverter was written around a 32-bit MCU ABI.  Building it
+unchanged as a 64-bit macOS process changes pointer-bearing runtime structures
+(texture_t, model-related structs, etc.), which can corrupt its generated brush
+model representation and crash while converting pak0.  This wrapper therefore
+builds a private host copy of the converter sources and injects
+RP2350_HOST_CONVERTER.  The source tree itself remains the authoritative
+conversion implementation; the host define only selects fixed-width serialized
+fields where the converted representation stores MCU addresses/offsets.
 
-This deliberately keeps the original PAK untouched.  It is also deliberately
-separate from the later per-level internal-flash capture backend: this pipeline
-provides the repeatable front end and measurements while that backend is wired
-into the original model loader.
+The script:
+  1. builds the author's MCUPackConverter as a host analysis tool;
+  2. runs it on shareware pak0.pak;
+  3. runs build_assets.py on original and converted PAKs;
+  4. writes JSON reports and a compact comparison summary.
 """
 from __future__ import annotations
-import argparse, json, os, shutil, subprocess, sys
+import argparse, json, shutil, subprocess, sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[2]
 MCU=ROOT/'Tools'/'MCUPackConverter'
 RP=ROOT/'Tools'/'RP2350Pack'
 SOURCES=['main.c','model.c','pakStringGenerator.c','sky.c','wavconverter.c']
+HEADERS=['quakedef.h','model.h','modelgen.h','bspfile.h','mathlib.h','r_local.h','sky.h','wavconverter.h','pakStringGenerator.h']
 
 def run(cmd,cwd=None):
     print('+',' '.join(map(str,cmd)),flush=True)
@@ -39,20 +43,41 @@ def compiler(name=None):
         if p: return p
     raise SystemExit('no host C compiler found (tried cc, clang, gcc)')
 
+def prepare_host_sources(dst):
+    """Copy converter sources and patch only serialized pointer fields to u32.
+
+    MG24/RP2350 are 32-bit targets.  On a 64-bit host, C pointers make texture_t
+    larger and alter serialized layouts.  The converter does not need to
+    dereference the final extmem texture addresses while producing the PAK, so
+    representing those serialized addresses as uint32_t is the correct host ABI.
+    """
+    if dst.exists(): shutil.rmtree(dst)
+    dst.mkdir(parents=True)
+    for name in SOURCES+HEADERS:
+        src=MCU/name
+        if not src.exists(): raise SystemExit(f'missing MCUPackConverter source: {src}')
+        shutil.copy2(src,dst/name)
+
+    model=dst/'model.h'
+    text=model.read_text()
+    needle='\tuint8_t\t*extmemdata[MIPLEVELS];\t\t// four mip maps stored'
+    repl='''#if RP2350_HOST_CONVERTER\n\tuint32_t\textmemdata[MIPLEVELS];\t// serialized 32-bit MCU addresses/offsets\n#else\n\tuint8_t\t*extmemdata[MIPLEVELS];\t\t// four mip maps stored\n#endif'''
+    if needle not in text:
+        raise SystemExit('host ABI patch failed: texture_t extmemdata declaration changed upstream')
+    model.write_text(text.replace(needle,repl))
+
 def build_converter(out,cc):
     out.parent.mkdir(parents=True,exist_ok=True)
-    src=[MCU/x for x in SOURCES]
-    missing=[str(x) for x in src if not x.exists()]
-    if missing: raise SystemExit('missing MCUPackConverter sources: '+', '.join(missing))
-    cmd=[cc,'-std=c11','-O2','-Wall','-Wextra','-I',MCU,*src,'-lm','-o',out]
+    hostsrc=out.parent/'mcu-host-src'
+    prepare_host_sources(hostsrc)
+    src=[hostsrc/x for x in SOURCES]
+    cmd=[cc,'-std=c11','-O2','-Wall','-Wextra','-DRP2350_HOST_CONVERTER=1','-I',hostsrc,*src,'-lm','-o',out]
     run(cmd)
 
 def analyze(pak,outpak,jsonfile,firmware,detail=False):
     cmd=[sys.executable,RP/'build_assets.py',pak,'-o',outpak,'--json',jsonfile,
          '--firmware-bytes',hex(firmware)]
     if detail: cmd.append('--detail')
-    # build_assets exits 2 when an image does not fit. That is a measurement,
-    # not a pipeline failure, so accept 0 or 2.
     print('+',' '.join(map(str,cmd)),flush=True)
     p=subprocess.run([str(x) for x in cmd])
     if p.returncode not in (0,2): raise subprocess.CalledProcessError(p.returncode,cmd)
@@ -99,7 +124,12 @@ def main():
     elif not exe.exists(): raise SystemExit(f'--skip-build requested but missing {exe}')
 
     converted=out/'pak0conv.pak'
-    run([exe,pak,converted],cwd=out)
+    try:
+        run([exe,pak,converted],cwd=out)
+    except subprocess.CalledProcessError as e:
+        if e.returncode in (-11,139):
+            raise SystemExit('MCUPackConverter crashed with SIGSEGV. Re-run without --skip-build so the fixed 32-bit host serialization ABI is rebuilt.') from e
+        raise
 
     orig_xip=out/'pak0-original-xip.pak'; orig_json=out/'pak0-original.json'
     conv_xip=out/'pak0-mg24-xip.pak'; conv_json=out/'pak0-mg24.json'
