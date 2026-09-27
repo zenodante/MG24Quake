@@ -22,10 +22,11 @@ set(QRP_PLATFORM_SOURCES
 add_executable(quake_rp2350_bringup
     main.c qbsp.c qrender.c qcollision.c ${QRP_PLATFORM_SOURCES})
 
-# Phase-1 compile target. RP2350 include directories MUST precede QuakeMG24
-# directories: main.h and extMemory.h are intentional platform shims which
-# prevent EFR32/Silicon-Labs generated headers and SPI-flash policy from
-# leaking into the Pico build.
+# Phase-1 compile target. RP2350 include directories precede QuakeMG24
+# directories for normal platform interfaces. qengine_compat.h is additionally
+# force-included because quoted includes inside MG24 headers search their own
+# directory first; compiler/CMSIS vocabulary must therefore not depend on
+# header include order or on accidentally reaching an EFR32 main.h.
 add_library(quake_rp2350_engine_phase1 OBJECT
     qengine_probe.c qsys.c qpak.c qfiles.c
     ../../QuakeMG24/Quake/model.c)
@@ -34,7 +35,9 @@ target_include_directories(quake_rp2350_engine_phase1 BEFORE PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/boards")
 target_include_directories(quake_rp2350_engine_phase1 PRIVATE
     ../../QuakeMG24/Quake ../../QuakeMG24/src)
-target_compile_options(quake_rp2350_engine_phase1 PRIVATE -Wall -Wextra -O2)
+target_compile_options(quake_rp2350_engine_phase1 PRIVATE
+    -Wall -Wextra -O2
+    "-include${CMAKE_CURRENT_LIST_DIR}/qengine_compat.h")
 target_compile_definitions(quake_rp2350_engine_phase1 PRIVATE QUAKE_RP2350=1)
 target_link_libraries(quake_rp2350_engine_phase1 PRIVATE pico_stdlib)
 
