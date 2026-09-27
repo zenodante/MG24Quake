@@ -38,7 +38,7 @@ Host tests cover QAD1 validation, incremental decoding, 11025->22050 sample-hold
 
 ## Host tools and current Flash status
 
-`Tools/RP2350Pack/mcu_pack_converter.py` performs portable host conversion including alias MDL and QAD1 sound conversion. `Tools/RP2350Pack/xip_image_builder.py` builds QXIP and physically deduplicates exact BSP miptex records into a global texture store. `Tools/RP2350Pack/run_pipeline.py` is the preferred one-command conversion entry point so MDL/QAD1 conversion is not accidentally bypassed. `Tools/RP2350Pack/make_uf2.py` validates the QXIP1 layout and combines firmware plus immutable assets without writing the persistent save partition.
+`Tools/RP2350Pack/mcu_pack_converter.py` performs portable host conversion including alias MDL and QAD1 sound conversion. `Tools/RP2350Pack/xip_image_builder.py` builds QXIP and physically deduplicates exact BSP miptex records into a global texture store. `Tools/RP2350Pack/run_pipeline.py` is the preferred one-command conversion entry point so MDL/QAD1 conversion is not accidentally bypassed. `Tools/RP2350Pack/make_uf2.py` validates QXIP1 and can produce a combined firmware+asset UF2. `Tools/RP2350Pack/make_asset_uf2.py` produces an **asset-only UF2** beginning at the 1 MiB asset partition, allowing firmware and immutable resources to be flashed independently during development.
 
 Current measured shareware footprint after implemented conversions:
 
@@ -56,7 +56,7 @@ No lightmap compression is required for capacity at this stage.
 
 ## Reproducible firmware + QXIP build
 
-The normal RP2350 build/flash workflow from the repository root is three stages. The examples below assume the original shareware PAK is `build/pak0.pak` and the RP2350 build directory is `build_rp2350`.
+The preferred development workflow keeps firmware and immutable resources as separate UF2 images. The examples below assume the original shareware PAK is `build/pak0.pak` and the RP2350 build directory is `build_rp2350`.
 
 ### 1. Build firmware
 
@@ -72,6 +72,8 @@ This produces the firmware-only files including:
 build_rp2350/quake_rp2350_bringup.uf2
 build_rp2350/quake_rp2350_bringup.bin
 ```
+
+The firmware UF2 writes only the reserved first 1 MiB firmware region. During engine development this is the image that should normally be rebuilt and reflashed repeatedly.
 
 ### 2. Regenerate converted QXIP assets
 
@@ -92,7 +94,33 @@ build_rp2350/quake-assets.qxip
 
 For the current shareware set the expected report is approximately 14.46 MiB QXIP, 15.00 MiB asset budget and +0.54 MiB headroom. The current measured image is 15,161,212 bytes with 339 files, 21 levels, 396 unique global textures and zero sound-conversion errors.
 
-### 3. Combine firmware and assets into the flashable UF2
+### 3. Generate the independent asset UF2
+
+```sh
+python3 Tools/RP2350Pack/make_asset_uf2.py \
+  build_rp2350/quake-assets.qxip \
+  build_rp2350/quake-assets.uf2
+```
+
+`quake-assets.uf2` contains **assets only**. Its first payload byte is written at the asset partition start, normally flash/XIP address `0x10100000`, corresponding to the **1 MiB offset** after firmware. The script validates QXIP1, the TEX1 store and the save-partition boundary. It does not write the firmware partition and does not write the persistent save partition.
+
+Flash this asset image whenever the converted resources or QXIP layout change:
+
+```text
+build_rp2350/quake-assets.uf2
+```
+
+After the current asset image has been flashed once, ordinary engine-code iterations require only rebuilding and flashing:
+
+```text
+build_rp2350/quake_rp2350_bringup.uf2
+```
+
+This avoids rewriting approximately 14.46 MiB of immutable resources for every firmware change.
+
+### 4. Optional combined UF2
+
+A single complete image remains useful for provisioning a blank board or when both firmware and assets changed:
 
 ```sh
 python3 Tools/RP2350Pack/make_uf2.py \
@@ -101,13 +129,7 @@ python3 Tools/RP2350Pack/make_uf2.py \
   build_rp2350/quake_rp2350_full.uf2
 ```
 
-Flash this file to the board:
-
-```text
-build_rp2350/quake_rp2350_full.uf2
-```
-
-Do not use `quake_rp2350_bringup.uf2` when testing production QXIP resources: it contains firmware only. `make_uf2.py` validates QXIP1 and places the immutable asset partition after the 1 MiB firmware reservation while leaving the save partition untouched.
+The combined image writes firmware plus the immutable asset partition while leaving the save partition untouched. It is no longer the preferred image for routine firmware-only development.
 
 ## Migration phases and status
 
@@ -134,15 +156,17 @@ Completed checkpoints:
 11. QXIP exposes zero-copy level lump and global TEX1 lookup. The host builder now emits BSP-compatible level texture directories whose relative offsets can point directly into the shared global TEX1 store, allowing the original MG24 texture pointer arithmetic to remain usable without SRAM texture copies.
 12. The regenerated BSP-compatible QXIP asset image is **15,161,212 bytes (14.46 MiB)**, below the **15.00 MiB** asset budget with about **0.54 MiB headroom**.
 13. Resource-capacity work is sufficient for Phase 1; lightmap compression is deferred.
-14. The reproducible firmware -> conversion pipeline -> combined UF2 procedure is documented above and the combined QXIP/QAD1 image has been successfully flashed and tested.
+14. The real MG24 model file ABI now resolves files through the RP2350 QXIP mapping layer, so `Mod_LoadModel()` can receive a direct XIP pointer rather than an SRAM/file-cache copy.
+15. Firmware and immutable assets can now be flashed independently: `quake-assets.uf2` starts at the 1 MiB asset partition, while routine firmware iterations update only the firmware UF2.
 
 Immediate next work:
 
-1. Connect the real `Mod_ForName` / `Mod_LoadModel` / `Mod_LoadBrushModel` path to the QXIP BSP-compatible `maps/start.bsp` payload.
-2. Validate that the original MG24 `Mod_LoadTextures()` follows the generated cross-QXIP relative `dataofs[]` directly into TEX1 and that all bounds/pointer assumptions remain valid on RP2350.
-3. Remove remaining RP2350 runtime flash-programming dependencies and load `start` entirely through immutable QXIP/XIP.
-4. Continue MG24 engine source integration and profile SRAM/XIP hot paths.
-5. Measure final linked firmware size against the 1.00 MiB reservation.
+1. Turn the current Phase-1 compile probe into a **runtime model-loader probe** that mounts QXIP, calls `Mod_Init()` and loads `maps/start.bsp` through `Mod_ForName()` / `Mod_LoadModel()` / `Mod_LoadBrushModel()`.
+2. Add narrow serial checkpoints around the real brush-model loader so the first remaining MG24 platform/storage assumption can be identified on hardware rather than guessed in advance.
+3. Validate that the original MG24 `Mod_LoadTextures()` follows the generated cross-QXIP relative `dataofs[]` directly into TEX1 and that all bounds/pointer assumptions remain valid on RP2350.
+4. Remove any remaining runtime flash-programming dependency actually encountered on the real loading path; do not pre-emptively rewrite engine logic that is already portable.
+5. Continue MG24 engine source integration and profile SRAM/XIP hot paths.
+6. Measure final linked firmware size against the 1.00 MiB reservation.
 
 Phase 1 is not complete until the real engine links and `start` loads through the production XIP path.
 
