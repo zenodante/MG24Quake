@@ -1,1 +1,0 @@
-cmd='/opt/homebrew/bin/cmake;-DCMAKE_MAKE_PROGRAM:FILEPATH=/opt/homebrew/bin/ninja;-DPICO_SDK_PATH:FILEPATH=/Users/mingye/Documents/pico8c/third_party/pico-sdk;-DUSE_PRECOMPILED:BOOL=true;-DUSE_MBEDTLS=0;-DPICO_DEBUG_INFO_IN_RELEASE=OFF;-GNinja;-S;<SOURCE_DIR><SOURCE_SUBDIR>;-B;<BINARY_DIR>'

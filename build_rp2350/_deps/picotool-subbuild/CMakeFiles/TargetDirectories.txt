@@ -1,3 +1,0 @@
-/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/CMakeFiles/picotool-populate.dir
-/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/CMakeFiles/edit_cache.dir
-/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/CMakeFiles/rebuild_cache.dir

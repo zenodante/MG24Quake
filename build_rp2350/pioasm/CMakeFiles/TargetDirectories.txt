@@ -1,7 +1,0 @@
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm/CMakeFiles/pioasm.dir
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm/CMakeFiles/edit_cache.dir
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm/CMakeFiles/rebuild_cache.dir
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm/CMakeFiles/list_install_components.dir
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm/CMakeFiles/install.dir
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm/CMakeFiles/install/local.dir
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm/CMakeFiles/install/strip.dir

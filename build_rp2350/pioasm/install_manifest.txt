@@ -1,5 +1,0 @@
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm-install/pioasm/pioasm
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm-install/pioasm/pioasmTargets.cmake
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm-install/pioasm/pioasmTargets-release.cmake
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm-install/pioasm/pioasmConfig.cmake
-/Users/mingye/Documents/MG24Quake/build_rp2350/pioasm-install/pioasm/pioasmConfigVersion.cmake
