@@ -17,21 +17,22 @@ set(QRP_PLATFORM_SOURCES
     qpak.c qfiles.c qmix.c qservice.c
     boards/st7789.c boards/qwstpad.c ../../QuakeMG24/src/font8x8.c)
 
-# Existing hardware/resource diagnostic.  Keep this while Phase 1 brings the
-# real MG24 engine up; qrender/qbsp/qcollision are not the production renderer.
+# Existing hardware/resource diagnostic. Keep while Phase 1 brings up the real
+# MG24 engine; qbsp/qrender/qcollision are not the production engine.
 add_executable(quake_rp2350_bringup
     main.c qbsp.c qrender.c qcollision.c ${QRP_PLATFORM_SOURCES})
 
-# Phase-1 engine integration checkpoint.  This compiles against the actual
-# MG24 Quake engine ABI and the RP2350 file/XIP + core-1 service layer without
-# creating another renderer.  Engine source groups are added here incrementally
-# as EFR32-only dependencies are removed.
+# Phase-1 compile target.  RP2350 include directories intentionally precede
+# QuakeMG24/src so extMemory.h resolves to the memory-mapped-XIP shim rather
+# than the EFR32 interleaved-SPI implementation.
 add_library(quake_rp2350_engine_phase1 OBJECT
-    qengine_probe.c qpak.c qfiles.c)
+    qengine_probe.c qsys.c qpak.c qfiles.c
+    ../../QuakeMG24/Quake/model.c)
 target_include_directories(quake_rp2350_engine_phase1 PRIVATE
-    . boards ../../QuakeMG24/src ../../QuakeMG24/Quake)
+    . ../../QuakeMG24/Quake ../../QuakeMG24/src boards)
 target_compile_options(quake_rp2350_engine_phase1 PRIVATE -Wall -Wextra -O2)
 target_compile_definitions(quake_rp2350_engine_phase1 PRIVATE QUAKE_RP2350=1)
+target_link_libraries(quake_rp2350_engine_phase1 PRIVATE pico_stdlib)
 
 # Limit linkable Flash without changing the board's physical 16 MiB capacity.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/flash_layout.h")
