@@ -8,12 +8,12 @@ from pathlib import Path
 import struct
 import zlib
 
+from flash_layout import BASE, ASSET, SAVE, GUARD
+
 MAGIC0, MAGIC1, END = 0x0A324655, 0x9E5D5157, 0x0AB16F30
-BASE, ASSET, SAVE = 0x10000000, 0x10100000, 0x10FC0000
-GUARD = ASSET - 4096
 
 
-def combine(firmware, assets):
+def parse_firmware(firmware):
     if not firmware or len(firmware) % 512:
         raise ValueError("Invalid firmware UF2 length")
     records = []
@@ -48,18 +48,12 @@ def combine(firmware, assets):
         if family != fid:
             raise ValueError("Mixed UF2 families")
         records.append((address, block[32:32 + size]))
-    if len(assets) < 64 or assets[:8] != b"QRP2350\0":
-        raise ValueError("Invalid QPAK")
-    version, block_size, total = struct.unpack_from("<3I", assets, 8)
-    payload, metadata_crc = struct.unpack_from("<2I", assets, 36)
-    if (version != 1 or block_size != 4096 or total != len(assets) or
-            len(assets) > SAVE - ASSET or not 64 <= payload <= len(assets) or
-            zlib.crc32(assets[64:payload]) != metadata_crc):
-        raise ValueError("QPAK size/version/metadata/budget check failed")
-    for pos in range(0, len(assets), 256):
-        records.append((ASSET + pos, assets[pos:pos + 256].ljust(256, b"\xff")))
-    if family != 0xE48BFF59:
+    if not records or family != 0xE48BFF59:
         raise ValueError("Expected RP2350 Arm secure firmware family")
+    return prefix, records, family
+
+
+def encode(prefix, records, family):
     out = bytearray(prefix)
     for i, (address, data) in enumerate(records):
         if address + len(data) > SAVE:
@@ -71,15 +65,44 @@ def combine(firmware, assets):
     return bytes(out)
 
 
+def firmware_only(firmware):
+    """Validate all writes and relocate E10 guard, without reading any assets."""
+    return encode(*parse_firmware(firmware))
+
+
+def combine(firmware, assets):
+    prefix, records, family = parse_firmware(firmware)
+    if len(assets) < 64 or assets[:8] != b"QRP2350\0":
+        raise ValueError("Invalid QPAK")
+    version, block_size, total = struct.unpack_from("<3I", assets, 8)
+    payload, metadata_crc = struct.unpack_from("<2I", assets, 36)
+    if (version != 1 or block_size != 4096 or total != len(assets) or
+            len(assets) > SAVE - ASSET or not 64 <= payload <= len(assets) or
+            zlib.crc32(assets[64:payload]) != metadata_crc):
+        raise ValueError("QPAK size/version/metadata/budget check failed")
+    for pos in range(0, len(assets), 256):
+        records.append((ASSET + pos, assets[pos:pos + 256].ljust(256, b"\xff")))
+    return encode(prefix, records, family)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("firmware", type=Path)
-    p.add_argument("assets", type=Path)
-    p.add_argument("output", type=Path)
+    p.add_argument("paths", type=Path, nargs="+")
+    p.add_argument("--firmware-only", action="store_true",
+                   help="firmware output: validate and relocate guard; assets are untouched")
     args = p.parse_args()
-    result = combine(args.firmware.read_bytes(), args.assets.read_bytes())
-    args.output.write_bytes(result)
-    print(f"Wrote {args.output}: {len(result):,} UF2 bytes (container, not Flash usage)")
+    if args.firmware_only:
+        if len(args.paths) != 1:
+            p.error("--firmware-only requires firmware and output paths")
+        result = firmware_only(args.firmware.read_bytes())
+    else:
+        if len(args.paths) != 2:
+            p.error("requires firmware, assets and output paths")
+        result = combine(args.firmware.read_bytes(), args.paths[0].read_bytes())
+    output = args.paths[-1]
+    output.write_bytes(result)
+    print(f"Wrote {output}: {len(result):,} UF2 bytes (container, not Flash usage)")
 
 
 if __name__ == "__main__":

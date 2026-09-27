@@ -19,7 +19,8 @@ BLOCK = 4096
 HEADER = struct.Struct("<8s14I")
 ENTRY = struct.Struct("<56s6I")
 PAGE = struct.Struct("<4I")
-ASSET_BUDGET = 0xEC0000
+from flash_layout import ASSET, SAVE
+ASSET_BUDGET = SAVE - ASSET
 
 
 def read_pak(path):

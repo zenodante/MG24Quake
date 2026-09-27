@@ -1,11 +1,13 @@
 #ifndef QPAK_H
 #define QPAK_H
+#include "flash_layout.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-enum { QPAK_BLOCK_BYTES = 4096, QPAK_ASSET_OFFSET = 0x100000,
-       QPAK_ASSET_CAPACITY = 0xec0000, QPAK_SAVE_OFFSET = 0xfc0000 };
+enum { QPAK_BLOCK_BYTES = 4096, QPAK_ASSET_OFFSET = QRP_ASSET_OFFSET,
+       QPAK_ASSET_CAPACITY = QRP_SAVE_OFFSET - QRP_ASSET_OFFSET,
+       QPAK_SAVE_OFFSET = QRP_SAVE_OFFSET };
 typedef struct {
     const uint8_t *image;
     uint32_t bytes, files, blocks, directory, block_table, payload;

@@ -1,5 +1,6 @@
 #include "qpak.h"
 #include "qmix.h"
+#include "qfiles.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,7 @@ int main(int argc,char **argv) {
     assert(!qpak_open(&(qpak_t){0},image,image_size-1));
     uint32_t dir=rd32(original+4),count=rd32(original+8)/64;
     assert(pak.files==count);
+    qfiles_mount(&pak);
     unsigned sounds=0,demos=0; size_t total=0;
     for (uint32_t i=0;i<count;++i) {
         const uint8_t *entry=original+dir+i*64;
@@ -34,6 +36,38 @@ int main(int argc,char **argv) {
         assert(qpak_read(&pak,&file,&cache,0,out,length));
         assert(!memcmp(out,original+start,length));
         assert(qpak_crc32(out,length)==file.crc32);
+        // Exercise Quake's handle API against the original PAK, including
+        // independent cursors and eviction of the shared decompression cache.
+        int a,b;
+        assert(Sys_FileOpenRead(name,&a)==(int)length);
+        assert(Sys_FileOpenRead(name,&b)==(int)length && a!=b);
+        assert(Sys_FileTime(name)==1);
+        uint8_t part[509];
+        for (uint32_t pos=0;pos<length;pos+=sizeof part) {
+            size_t n=length-pos; if(n>sizeof part)n=sizeof part;
+            assert(Sys_FileRead(a,part,sizeof part)==(int)n);
+            assert(!memcmp(part,original+start+pos,n));
+            uint32_t back=length-pos-(uint32_t)n;
+            Sys_FileSeek(b,(int)back);
+            assert(Sys_FileRead(b,part,(int)n)==(int)n);
+            assert(!memcmp(part,original+start+back,n));
+        }
+        assert(Sys_FileRead(a,part,1)==0);
+        Sys_FileSeek(a,-1); // invalid seeks preserve EOF
+        Sys_FileSeek(a,(int)length+1);
+        assert(Sys_FileRead(a,part,1)==0);
+        Sys_FileSeek(a,0);
+        assert(Sys_FileRead(a,NULL,1)==0);
+        assert(Sys_FileRead(a,part,-1)==0);
+        if(length) {
+            assert(Sys_FileRead(a,part,1)==1);
+            assert(part[0]==original[start]);
+        }
+        const uint8_t *mapped_file=qfiles_map(a,0,length);
+        assert(mapped_file==qpak_map(&pak,&file,0,length));
+        Sys_FileClose(a); Sys_FileClose(b);
+        assert(Sys_FileRead(a,part,1)==0);
+        assert(!qfiles_map(a,0,1));
         assert(!qpak_read(&pak,&file,&cache,length,out,1));
         assert(!qpak_read(&pak,&file,&cache,UINT32_MAX,out,1));
         // Boundary-straddling reads and cache evictions, not just sequential access.
@@ -64,6 +98,26 @@ int main(int argc,char **argv) {
         }
         total+=length; free(out);
     }
+    int opened[QFILES_MAX_HANDLES],missing;
+    for(unsigned i=0;i<QFILES_MAX_HANDLES;++i)
+        assert(Sys_FileOpenRead("gfx/palette.lmp",&opened[i])==768);
+    assert(Sys_FileOpenRead("gfx/palette.lmp",&missing)==-1 && missing==-1);
+    Sys_FileClose(opened[0]);
+    assert(Sys_FileOpenRead("gfx/palette.lmp",&missing)==768);
+    assert(Sys_FileOpenRead("missing.file",&missing)==-1 && missing==-1);
+    assert(Sys_FileOpenRead(NULL,&missing)==-1);
+    assert(Sys_FileOpenRead("gfx/palette.lmp",NULL)==-1);
+    assert(Sys_FileTime("missing.file")==-1);
+    assert(Sys_FileOpenWrite("config.cfg")==-1);
+    assert(Sys_FileWrite(opened[1],image,1)==0);
+    assert(Sys_FileRead(-1,image,1)==0);
+    assert(Sys_FileRead(QFILES_MAX_HANDLES+1,image,1)==0);
+    qfiles_mount(NULL);
+    assert(Sys_FileRead(opened[1],image,1)==0);
+    assert(Sys_FileOpenRead("gfx/palette.lmp",&missing)==-1);
+    qfiles_mount(&pak);
+    assert(Sys_FileOpenRead("gfx/palette.lmp",&missing)==768);
+    Sys_FileClose(missing);
     // Reject metadata damage and truncated/invalid LZ4 streams.
     image[64]^=1; assert(!qpak_open(&(qpak_t){0},image,image_size)); image[64]^=1;
     uint8_t dst[4096];

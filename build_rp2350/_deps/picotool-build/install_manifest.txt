@@ -1,0 +1,7 @@
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool/picotool
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool/picotoolTargets.cmake
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool/picotoolTargets-release.cmake
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool/picotoolConfig.cmake
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool/picotoolConfigVersion.cmake
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool/enc_bootloader.elf
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool/enc_bootloader_mbedtls.elf

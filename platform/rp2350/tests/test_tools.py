@@ -6,9 +6,63 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "Tools/RP2350Pack"))
 spec = importlib.util.spec_from_file_location("make_uf2", ROOT / "Tools/RP2350Pack/make_uf2.py")
 uf2 = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(uf2)
+
+
+class FirmwareUpdateTests(unittest.TestCase):
+    def firmware(self, size=256, guard=True):
+        records = [(uf2.BASE + i, b"x" * 256) for i in range(0, size, 256)]
+        prefix = b""
+        if guard:
+            prefix = bytearray(512)
+            struct.pack_into("<8I", prefix, 0, uf2.MAGIC0, uf2.MAGIC1,
+                             0xA000, 0x10FFFF00, 256, 0, 2, 0xE48BFF57)
+            prefix[32:288] = b"\xef" * 256
+            struct.pack_into("<I", prefix, 288, 0x9957E304)
+            struct.pack_into("<I", prefix, 508, uf2.END)
+        return uf2.encode(prefix, records, 0xE48BFF59)
+
+    def test_layout_abi(self):
+        self.assertEqual((uf2.BASE, uf2.GUARD, uf2.ASSET, uf2.SAVE),
+                         (0x10000000, 0x100FF000, 0x10100000, 0x10FC0000))
+
+    def test_firmware_growth_never_erases_resources_or_saves(self):
+        # Simulate sector erase + programming of every record, even the E10
+        # ignore record. Include both small and maximum allowed firmware.
+        for size in (256, 65536, uf2.GUARD-uf2.BASE):
+            raw = self.firmware(size)
+            output = uf2.firmware_only(raw)
+            self.assertEqual(uf2.firmware_only(output), output)
+            flash = bytearray(b"\xa5" * 0x1000000)
+            for pos in range(0, len(output), 512):
+                address, length = struct.unpack_from("<2I", output, pos+12)
+                offset = address-uf2.BASE
+                self.assertLessEqual(offset+length, uf2.ASSET-uf2.BASE)
+                sector = offset & ~4095
+                flash[sector:sector+4096] = b"\xff" * 4096
+                flash[offset:offset+length] = output[pos+32:pos+32+length]
+            self.assertEqual(flash[0x100000:], b"\xa5" * 0xf00000)
+
+    def test_without_guard(self):
+        raw = self.firmware(guard=False)
+        self.assertEqual(uf2.firmware_only(raw), raw)
+
+    def test_reject_invalid_firmware(self):
+        raw = self.firmware()
+        for offset, value in ((512+12, uf2.GUARD), (512+12, uf2.ASSET),
+                              (512+12, uf2.SAVE), (512+28, 0xE48BFF56),
+                              (512+20, 9), (512+24, 99), (512+16, 512),
+                              (0, 0), (288, 0)):
+            broken = bytearray(raw)
+            struct.pack_into("<I", broken, offset, value)
+            with self.assertRaises(ValueError):
+                uf2.firmware_only(broken)
+        for broken in (b"", raw[:-1], raw[:512]):
+            with self.assertRaises(ValueError):
+                uf2.firmware_only(broken)
 
 
 class ArtifactTests(unittest.TestCase):

@@ -1,0 +1,14 @@
+# Target labels
+ picotool-populate
+# Source files and their labels
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/CMakeFiles/picotool-populate
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/CMakeFiles/picotool-populate.rule
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/CMakeFiles/picotool-populate-complete.rule
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/picotool-populate-prefix/src/picotool-populate-stamp/picotool-populate-build.rule
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/picotool-populate-prefix/src/picotool-populate-stamp/picotool-populate-configure.rule
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/picotool-populate-prefix/src/picotool-populate-stamp/picotool-populate-download.rule
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/picotool-populate-prefix/src/picotool-populate-stamp/picotool-populate-install.rule
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/picotool-populate-prefix/src/picotool-populate-stamp/picotool-populate-mkdir.rule
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/picotool-populate-prefix/src/picotool-populate-stamp/picotool-populate-patch.rule
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/picotool-populate-prefix/src/picotool-populate-stamp/picotool-populate-test.rule
+/Users/mingye/Documents/MG24Quake/build_rp2350/_deps/picotool-subbuild/picotool-populate-prefix/src/picotool-populate-stamp/picotool-populate-update.rule
