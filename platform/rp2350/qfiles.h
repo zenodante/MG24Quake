@@ -9,10 +9,9 @@
 void qfiles_mount(const qpak_t *pak);
 /* Direct XIP access where possible; does not move the file cursor. */
 const uint8_t *qfiles_map(int handle, uint32_t offset, size_t length);
-/* MG24 model.c asks for an external-memory pointer to a complete converted
- * model file.  On RP2350/QXIP this is simply the immutable memory-mapped file
- * payload; no file copy, cache fill or level-time flash write is performed. */
-void *getExtMemPointerToFileInPak(const char *path, unsigned int *size);
+/* MG24 common.h declares the same ABI as byte *getExtMemPointerToFileInPak
+ * (char *, unsigned int *). uint8_t is the platform spelling of byte here. */
+uint8_t *getExtMemPointerToFileInPak(char *path, unsigned int *size);
 /* Signatures match Quake/sys.h. Open returns length or -1; handle -1 on failure.
  * Reads stop at EOF; invalid reads return 0. Out-of-range seeks are ignored.
  * Writing is unsupported until a separate save/config filesystem is added. */
