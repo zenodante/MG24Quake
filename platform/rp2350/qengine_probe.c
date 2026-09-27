@@ -1,16 +1,14 @@
 /* Phase-1 runtime probe for the original MG24 Quake model loader.
  *
- * This is deliberately not a second renderer or engine.  It mounts the same
- * immutable QXIP image used by the validated bringup firmware and then enters
- * the real MG24 Mod_Init -> Mod_ForName -> Mod_LoadModel -> Mod_LoadBrushModel
- * path.  Serial checkpoints make the first remaining platform assumption
- * visible on hardware.
+ * This is intentionally narrow: mount the production QXIP image, initialize
+ * the RP2350 SRAM replacement for MG24's internal-flash object store, then run
+ * the real Mod_Init -> Mod_ForName -> Mod_LoadModel -> Mod_LoadBrushModel path
+ * for maps/start.bsp.  It does not start the renderer/game or Core 1 yet.
  */
 #include "quakedef.h"
 #include "r_local.h"
 #include "d_local.h"
 #include "sys.h"
-
 #include "qpak.h"
 #include "qfiles.h"
 #include "qlevel_arena.h"
@@ -27,6 +25,8 @@ _Static_assert(sizeof(uint16_t) == 2, "Quake assets require 16-bit words");
 _Static_assert(sizeof(uint32_t) == 4, "Quake assets require 32-bit words");
 _Static_assert(sizeof(float) == 4, "MG24 renderer assumes IEEE-754 binary32");
 
+static qpak_t pak;
+
 /* Kept non-static so the linker/map file exposes the engine ABI checkpoint. */
 size_t qengine_phase1_abi_probe(void)
 {
@@ -34,65 +34,73 @@ size_t qengine_phase1_abi_probe(void)
            sizeof(medge_t) + sizeof(entity_t) + sizeof(espan_t);
 }
 
-static qpak_t pak;
+static void checkpoint(unsigned n, const char *message)
+{
+    printf("[phase1:%u] %s\n", n, message);
+    stdio_flush();
+}
 
 int main(void)
 {
     vreg_set_voltage(VREG_VOLTAGE_1_10);
-    set_sys_clock_pll(1200000000u, 6, 1);
+    set_sys_clock_pll(1200000000u, 6, 1); /* 200 MHz, same as bring-up. */
     stdio_init_all();
-    sleep_ms(1500); /* give USB CDC time to enumerate before the first checkpoint */
+    sleep_ms(1500);
 
-    printf("\nRP2350 MG24 model-loader probe\n");
-    printf("core0=%luMHz abi=%lu level_arena=%lu\n",
-           (unsigned long)(clock_get_hz(clk_sys) / 1000000u),
+    printf("\nRP2350 MG24 model-loader runtime probe\n");
+    printf("ABI bytes=%lu level_arena=%lu\n",
            (unsigned long)qengine_phase1_abi_probe(),
            (unsigned long)qlevel_arena_capacity());
 
-    bool assets = qpak_open(&pak,
-                            (const void *)(XIP_BASE + QPAK_ASSET_OFFSET),
-                            QPAK_ASSET_CAPACITY);
-    printf("[1] qxip open: %s", assets ? "OK" : "FAIL");
-    if (assets)
-        printf(" bytes=%lu files=%lu textures=%lu format=%u",
-               (unsigned long)pak.bytes, (unsigned long)pak.files,
-               (unsigned long)pak.texture_count, (unsigned)pak.format);
-    printf("\n");
-    if (!assets)
-        panic("Phase1: QXIP open failed");
-
+    checkpoint(1, "opening QXIP at flash +1 MiB");
+    if (!qpak_open(&pak, (const void *)(XIP_BASE + QPAK_ASSET_OFFSET),
+                   QPAK_ASSET_CAPACITY))
+        panic("phase1: QXIP open failed");
+    printf("QXIP bytes=%lu files=%lu textures=%lu\n",
+           (unsigned long)pak.bytes, (unsigned long)pak.files,
+           (unsigned long)pak.texture_count);
     qfiles_mount(&pak);
-    unsigned int start_bytes = 0;
-    byte *start = getExtMemPointerToFileInPak("maps/start.bsp", &start_bytes);
-    printf("[2] start.bsp map: %s ptr=%p bytes=%u\n",
-           start ? "OK" : "FAIL", (void *)start, start_bytes);
-    if (!start)
-        panic("Phase1: maps/start.bsp missing");
 
+    checkpoint(2, "mapping maps/start.bsp through production file ABI");
+    unsigned int bsp_bytes = 0;
+    byte *bsp = getExtMemPointerToFileInPak("maps/start.bsp", &bsp_bytes);
+    if (!bsp || bsp_bytes < sizeof(dheader_t))
+        panic("phase1: start.bsp missing/short");
+    printf("start.bsp xip=%p bytes=%u version=%d\n",
+           (void *)bsp, bsp_bytes, ((dheader_t *)bsp)->version);
+
+    checkpoint(3, "initializing RP2350 level SRAM arena");
     internalFlashInit();
-    printf("[3] level arena init: used=%lu common=%lu remaining=%lu\n",
+    printf("arena used=%lu common=%lu remaining=%lu\n",
            (unsigned long)qlevel_arena_used(),
            (unsigned long)qlevel_arena_common_bytes(),
            (unsigned long)(qlevel_arena_capacity() - qlevel_arena_used()));
 
-    printf("[4] Mod_Init begin\n");
+    checkpoint(4, "calling real MG24 Mod_Init");
     Mod_Init();
-    printf("[5] Mod_Init OK; Mod_ForName(start) begin\n");
-
-    model_t *world = Mod_ForName("maps/start.bsp", true);
-    printf("[6] Mod_ForName returned %p\n", (void *)world);
-    if (!world)
-        panic("Phase1: Mod_ForName returned NULL");
-
-    printf("[7] start loaded: type=%d surfaces=%d nodes=%d leafs=%d submodels=%d\n",
-           (int)world->type, world->numsurfaces, world->numnodes,
-           world->numleafs, world->numsubmodels);
-    printf("[8] level arena: used=%lu common=%lu remaining=%lu\n",
+    printf("after Mod_Init: arena used=%lu common=%lu\n",
            (unsigned long)qlevel_arena_used(),
-           (unsigned long)qlevel_arena_common_bytes(),
-           (unsigned long)(qlevel_arena_capacity() - qlevel_arena_used()));
-    printf("PHASE1 MODEL LOAD PASS\n");
+           (unsigned long)qlevel_arena_common_bytes());
 
-    for (;;)
+    checkpoint(5, "calling Mod_ForName maps/start.bsp");
+    model_t *world = Mod_ForName("maps/start.bsp", true);
+    if (!world)
+        panic("phase1: Mod_ForName returned NULL");
+
+    checkpoint(6, "real MG24 brush-model load returned");
+    /* MG24 deliberately minimizes model_t; the desktop Quake diagnostic fields
+     * numsurfaces/numnodes/numleafs/numsubmodels are not members here.  Keep
+     * this probe on fields that actually belong to the ported model ABI and
+     * use arena high-water plus loader checkpoints for the first hardware run. */
+    printf("model=%p type=%d frames=%d arena=%lu/%lu common=%lu\n",
+           (void *)world, (int)world->type, world->numframes,
+           (unsigned long)qlevel_arena_used(),
+           (unsigned long)qlevel_arena_capacity(),
+           (unsigned long)qlevel_arena_common_bytes());
+
+    checkpoint(7, "start.bsp Phase-1 load SUCCESS");
+    printf("Leave the board running; no renderer/game loop is started by this probe.\n");
+    for (;;) {
         tight_loop_contents();
+    }
 }
