@@ -22,14 +22,15 @@ set(QRP_PLATFORM_SOURCES
 add_executable(quake_rp2350_bringup
     main.c qbsp.c qrender.c qcollision.c ${QRP_PLATFORM_SOURCES})
 
-# Phase-1 runtime model-loader probe. RP2350 include directories precede
-# QuakeMG24 directories for normal platform interfaces. qengine_compat.h is
-# force-included because quoted includes inside MG24 headers search their own
-# directory first; compiler/CMSIS vocabulary must therefore not depend on
-# header include order or on accidentally reaching an EFR32 main.h.
+# Phase-1 runtime model-loader probe. Use real platform-independent MG24
+# implementations as dependencies become necessary. Only platform/flash
+# services are replaced by RP2350 files: qlevel_arena.c intentionally replaces
+# MG24 internalFlash.c, while z_zone.c and common.c remain the real engine code.
 set(QRP_PHASE1_SOURCES
     qengine_probe.c qsys.c qpak.c qfiles.c qlevel_arena.c
-    ../../QuakeMG24/Quake/model.c)
+    ../../QuakeMG24/Quake/model.c
+    ../../QuakeMG24/Quake/z_zone.c
+    ../../QuakeMG24/Quake/common.c)
 add_executable(quake_rp2350_engine_phase1 ${QRP_PHASE1_SOURCES})
 target_include_directories(quake_rp2350_engine_phase1 BEFORE PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
@@ -37,8 +38,9 @@ target_include_directories(quake_rp2350_engine_phase1 BEFORE PRIVATE
 target_include_directories(quake_rp2350_engine_phase1 PRIVATE
     ../../QuakeMG24/Quake ../../QuakeMG24/src)
 target_compile_options(quake_rp2350_engine_phase1 PRIVATE
-    -Wall -Wextra -O2 -fstack-usage
+    -Wall -Wextra -O2 -fstack-usage -ffunction-sections -fdata-sections
     "-include${CMAKE_CURRENT_LIST_DIR}/qengine_compat.h")
+target_link_options(quake_rp2350_engine_phase1 PRIVATE -Wl,--gc-sections)
 target_compile_definitions(quake_rp2350_engine_phase1 PRIVATE
     QUAKE_RP2350=1 PICO_STACK_SIZE=0x1000 PICO_FLASH_SPI_CLKDIV=4)
 target_link_libraries(quake_rp2350_engine_phase1 PRIVATE
