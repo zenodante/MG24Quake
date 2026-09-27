@@ -26,6 +26,7 @@ _Static_assert(sizeof(uint32_t) == 4, "Quake assets require 32-bit words");
 _Static_assert(sizeof(float) == 4, "MG24 renderer assumes IEEE-754 binary32");
 
 static qpak_t pak;
+void qmodel_phase1_init(void);
 
 /* Kept non-static so the linker/map file exposes the engine ABI checkpoint. */
 size_t qengine_phase1_abi_probe(void)
@@ -71,6 +72,7 @@ int main(void)
 
     checkpoint(3, "initializing RP2350 level SRAM arena");
     internalFlashInit();
+    qmodel_phase1_init();
     printf("arena used=%lu common=%lu remaining=%lu\n",
            (unsigned long)qlevel_arena_used(),
            (unsigned long)qlevel_arena_common_bytes(),
@@ -88,10 +90,6 @@ int main(void)
         panic("phase1: Mod_ForName returned NULL");
 
     checkpoint(6, "real MG24 brush-model load returned");
-    /* MG24 deliberately minimizes model_t; the desktop Quake diagnostic fields
-     * numsurfaces/numnodes/numleafs/numsubmodels are not members here.  Keep
-     * this probe on fields that actually belong to the ported model ABI and
-     * use arena high-water plus loader checkpoints for the first hardware run. */
     printf("model=%p type=%d frames=%d arena=%lu/%lu common=%lu\n",
            (void *)world, (int)world->type, world->numframes,
            (unsigned long)qlevel_arena_used(),
