@@ -49,13 +49,34 @@ bool qpak_lz4_decode(const uint8_t *src, size_t size, uint8_t *dst, size_t expec
     }
     return pos == expected;
 }
+static bool qxip_open(qpak_t *pak,const uint8_t *p,size_t available) {
+    /* <4s9I>: magic,version,files,str_off,dir_off,data_off,tex_off,tex_size,
+       texture_count,image_bytes. Directory entries are <name_off,kind,off,size>. */
+    if (available < 40 || memcmp(p,"QXIP",4) || rd32(p+4)!=1) return false;
+    uint32_t files=rd32(p+8), strings=rd32(p+12), directory=rd32(p+16);
+    uint32_t data=rd32(p+20), tex=rd32(p+24), tex_bytes=rd32(p+28), bytes=rd32(p+36);
+    if (bytes<40 || bytes>available || bytes>QPAK_ASSET_CAPACITY || strings<40 ||
+        directory<strings || files>(bytes-directory)/16 || !range(directory,(size_t)files*16,bytes) ||
+        data<directory+(uint64_t)files*16 || data>bytes || !range(tex,tex_bytes,bytes)) return false;
+    for(uint32_t i=0;i<files;++i){
+        const uint8_t *e=p+directory+i*16;
+        uint32_t noff=rd32(e),kind=rd32(e+4),off=rd32(e+8),size=rd32(e+12);
+        if(noff>=directory-strings || kind>1 || !range(off,size,bytes))return false;
+        const uint8_t *name=p+strings+noff;
+        if(!memchr(name,0,directory-(strings+noff)))return false;
+    }
+    *pak=(qpak_t){.image=p,.bytes=bytes,.files=files,.directory=directory,.payload=data,
+        .strings=strings,.texture_store=tex,.texture_store_bytes=tex_bytes,.format=QPAK_FORMAT_QXIP1};
+    return true;
+}
 bool qpak_open(qpak_t *pak, const void *image, size_t available) {
-    if (!pak || !image || available < 64) return false;
+    if (!pak || !image || available < 40) return false;
     memset(pak,0,sizeof(*pak));
     const uint8_t *p = image;
-    if (memcmp(p,"QRP2350\0",8) || rd32(p+8)!=1 || rd32(p+12)!=QPAK_BLOCK_BYTES) return false;
+    if (!memcmp(p,"QXIP",4)) return qxip_open(pak,p,available);
+    if (available < 64 || memcmp(p,"QRP2350\0",8) || rd32(p+8)!=1 || rd32(p+12)!=QPAK_BLOCK_BYTES) return false;
     qpak_t q = {.image=p, .bytes=rd32(p+16), .files=rd32(p+20), .blocks=rd32(p+24),
-                .directory=rd32(p+28), .block_table=rd32(p+32), .payload=rd32(p+36)};
+                .directory=rd32(p+28), .block_table=rd32(p+32), .payload=rd32(p+36),.format=QPAK_FORMAT_BLOCKS};
     if (q.bytes < 64 || q.bytes > available || q.bytes > QPAK_ASSET_CAPACITY || q.directory!=64 ||
         q.files > (q.bytes-64)/80 || q.block_table!=64+q.files*80 ||
         !range(q.block_table,0,q.bytes) || q.blocks>(q.bytes-q.block_table)/16 ||
@@ -86,22 +107,36 @@ bool qpak_open(qpak_t *pak, const void *image, size_t available) {
 }
 bool qpak_find(const qpak_t *pak, const char *name, qpak_file_t *file) {
     if (!pak || !pak->image || !name || !file) return false;
+    if(pak->format==QPAK_FORMAT_QXIP1){
+        for(uint32_t i=0;i<pak->files;++i){
+            const uint8_t *e=pak->image+pak->directory+i*16;
+            uint32_t noff=rd32(e);
+            if(!strcmp((const char *)(pak->image+pak->strings+noff),name)){
+                uint32_t kind=rd32(e+4),off=rd32(e+8),size=rd32(e+12);
+                *file=(qpak_file_t){.size=size,.direct_offset=off,.kind=kind,.direct=true};
+                return true;
+            }
+        }
+        return false;
+    }
     for (uint32_t i=0;i<pak->files;++i) {
         const uint8_t *e=pak->image+pak->directory+i*80;
         if (!strcmp((const char *)e,name)) {
-            *file=(qpak_file_t){rd32(e+56),rd32(e+60),rd32(e+64),rd32(e+68)};
+            *file=(qpak_file_t){.size=rd32(e+56),.first_block=rd32(e+60),.block_count=rd32(e+64),.crc32=rd32(e+68)};
             return true;
         }
     }
     return false;
 }
 static bool file_range(const qpak_t *p, const qpak_file_t *f,uint32_t off,size_t len) {
-    return p && p->image && f && range(off,len,f->size) &&
-           range(f->first_block,f->block_count,p->blocks) &&
+    if(!p||!p->image||!f||!range(off,len,f->size))return false;
+    if(f->direct)return range(f->direct_offset,f->size,p->bytes);
+    return range(f->first_block,f->block_count,p->blocks) &&
            f->block_count==f->size/QPAK_BLOCK_BYTES+(f->size%QPAK_BLOCK_BYTES!=0);
 }
 const uint8_t *qpak_map(const qpak_t *pak,const qpak_file_t *f,uint32_t offset,size_t length) {
     if (!file_range(pak,f,offset,length) || !length) return NULL;
+    if(f->direct)return pak->image+f->direct_offset+offset;
     uint32_t page=f->first_block+offset/QPAK_BLOCK_BYTES, within=offset%QPAK_BLOCK_BYTES;
     const uint8_t *result=NULL;
     size_t done=0;
@@ -120,6 +155,10 @@ const uint8_t *qpak_map(const qpak_t *pak,const qpak_file_t *f,uint32_t offset,s
 bool qpak_read(const qpak_t *pak,const qpak_file_t *f,qpak_cache_t *cache,
                uint32_t offset,void *output,size_t length) {
     if (!file_range(pak,f,offset,length) || (!output && length)) return false;
+    if(f->direct){
+        memcpy(output,pak->image+f->direct_offset+offset,length);
+        return true;
+    }
     uint8_t *out=output;
     while (length) {
         uint32_t page=f->first_block+offset/QPAK_BLOCK_BYTES, within=offset%QPAK_BLOCK_BYTES;
