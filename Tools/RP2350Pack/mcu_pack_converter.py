@@ -38,18 +38,22 @@ def chunks(wav):
         if end>len(wav): break
         yield tag,wav[data:end],p; p=end+(n&1)
 
-def convert_wav(wav):
-    fmt=None; pcm=None; loopstart=-1
+def wav_info(wav):
+    info={'loopstart':-1}
     for tag,data,_ in chunks(wav):
         if tag==b'fmt ' and len(data)>=16:
-            form,ch,rate,_,_,bits=struct.unpack_from('<HHIIHH',data)
-            if form!=1: raise ValueError('non-PCM WAV')
-            fmt=(ch,rate,bits//8)
-        elif tag==b'data': pcm=data
-        elif tag==b'cue ' and len(data)>=28: loopstart=struct.unpack_from('<I',data,24)[0]
-    if not fmt or pcm is None: raise ValueError('missing WAV fmt/data')
-    ch,rate,width=fmt
-    if ch!=1 or width not in (1,2): raise ValueError('unsupported WAV format')
+            form,ch,rate,byterate,block,bits=struct.unpack_from('<HHIIHH',data); info.update(format=form,channels=ch,rate=rate,byte_rate=byterate,bits=bits,block_align=block)
+        elif tag==b'data': info['data_bytes']=len(data)
+        elif tag==b'cue ' and len(data)>=28: info['loopstart']=struct.unpack_from('<I',data,24)[0]
+    if 'rate' not in info or 'data_bytes' not in info: raise ValueError('missing WAV fmt/data')
+    bytes_per_sample=info['channels']*(info['bits']//8); info['samples']=info['data_bytes']//bytes_per_sample; info['duration_seconds']=info['samples']/info['rate']; return info
+
+def convert_wav(wav):
+    wi=wav_info(wav); pcm=None
+    for tag,data,_ in chunks(wav):
+        if tag==b'data': pcm=data; break
+    ch=wi['channels'];rate=wi['rate'];width=wi['bits']//8;loopstart=wi['loopstart']
+    if wi['format']!=1 or ch!=1 or width not in (1,2): raise ValueError('unsupported WAV format')
     insamples=len(pcm)//width; scale=rate/11025.0; outlen=int(insamples/scale)
     if loopstart!=-1: loopstart=int(loopstart/scale)
     out=bytearray(outlen); frac=0; fracstep=int(scale*256)
@@ -85,8 +89,6 @@ def analyze_bsp(name,data):
     for i,(off,n,blob) in enumerate(lumps):
         x={'index':i,'name':LUMP_NAMES[i],'old_offset':off,'old_bytes':n,'action':'copy'}
         if i==2:x['textures']=texture_info(blob)
-        if i==10:x['action']='join_into_nodes';x['projected_bytes']=0
-        elif i==5:x['action']='replace_nodes_and_leafs'
         info.append(x)
     return lumps,info,{'faces':lumps[7][1]//20,'nodes':lumps[5][1]//24,'leafs':lumps[10][1]//28}
 
@@ -99,17 +101,19 @@ def repack_bsp_copy(data):
 
 def projected_bsp_size(data,mnode_size,mleaf_size):
     lumps=parse_bsp(data);faces=lumps[7][1]//20;nodes=lumps[5][1]//24;leafs=lumps[10][1]//28;nodeblock=4+2*faces+mnode_size*nodes+mleaf_size*leafs;pos=BSP_HDR_SIZE
-    for i in LUMP_ORDER:
-        pos=align4(pos);pos+=0 if i==10 else nodeblock if i==5 else lumps[i][1]
+    for i in LUMP_ORDER: pos=align4(pos);pos+=0 if i==10 else nodeblock if i==5 else lumps[i][1]
     return pos,nodeblock
 
 def convert(files,bsp_mode,mnode_size,mleaf_size):
     out=OrderedDict();manifest={'files':[],'totals':{'input':0,'output':0},'notes':[]};mdl_in=mdl_out=mdl_count=0
+    snd={'files':0,'source_file_bytes':0,'source_pcm_bytes':0,'converted_bytes':0,'duration_seconds':0.0,'source_rates':{},'source_bits':{},'errors':0}
     for name,data in files.items():
         low=name.lower();result=data;kind='copy';extra={}
         if low.startswith('sound') and low.endswith('.wav'):
-            try:result=convert_wav(data);kind='wav_11025_s8'
-            except Exception as e:kind='wav_error_passthrough';extra['error']=str(e)
+            snd['files']+=1;snd['source_file_bytes']+=len(data)
+            try:
+                wi=wav_info(data);result=convert_wav(data);kind='wav_11025_s8';snd['source_pcm_bytes']+=wi['data_bytes'];snd['converted_bytes']+=len(result);snd['duration_seconds']+=wi['duration_seconds'];snd['source_rates'][str(wi['rate'])]=snd['source_rates'].get(str(wi['rate']),0)+1;snd['source_bits'][str(wi['bits'])]=snd['source_bits'].get(str(wi['bits']),0)+1;extra['wav']=wi
+            except Exception as e:kind='wav_error_passthrough';extra['error']=str(e);snd['converted_bytes']+=len(data);snd['errors']+=1
         elif low.endswith('.bsp'):
             try:
                 lumps,linfo,counts=analyze_bsp(name,data);projected,nodeblock=projected_bsp_size(data,mnode_size,mleaf_size);extra={'lumps':linfo,'counts':counts,'projected_mg24_bytes':projected,'projected_nodeblock_bytes':nodeblock,'mnode_size':mnode_size,'mleaf_size':mleaf_size}
@@ -118,26 +122,17 @@ def convert(files,bsp_mode,mnode_size,mleaf_size):
             except Exception as e:kind='bsp_error_passthrough';extra['error']=str(e)
         elif low.endswith('.mdl'):
             mdl_count+=1;mdl_in+=len(data)
-            try:
-                result,meta=convert_mdl(data);kind='mdl_mg24_memory_ready';extra['mdl']=meta;mdl_out+=len(result)
-            except Exception as e:
-                kind='mdl_error_passthrough';extra['error']=str(e);mdl_out+=len(data)
+            try: result,meta=convert_mdl(data);kind='mdl_mg24_memory_ready';extra['mdl']=meta;mdl_out+=len(result)
+            except Exception as e: kind='mdl_error_passthrough';extra['error']=str(e);mdl_out+=len(data)
         out[name]=result;rec={'name':name,'kind':kind,'input_bytes':len(data),'output_bytes':len(result),'delta':len(result)-len(data)};rec.update(extra);manifest['files'].append(rec);manifest['totals']['input']+=len(data);manifest['totals']['output']+=len(result)
-    manifest['mdl_totals']={'files':mdl_count,'input_bytes':mdl_in,'output_bytes':mdl_out,'delta_bytes':mdl_out-mdl_in}
-    manifest['notes'].append('Alias MDL conversion is pure Python and uses explicit little-endian MG24 minimized layouts; conversion errors are reported per-file and passed through rather than hidden.')
-    manifest['notes'].append('BSP node/leaf serialization remains a size projection until its target structures are translated.')
+    snd['pcm_11025_payload_bytes']=round(snd['duration_seconds']*11025);snd['pcm_8000_payload_bytes']=round(snd['duration_seconds']*8000);snd['pcm_5512_payload_bytes']=round(snd['duration_seconds']*5512.5);snd['ima_adpcm_11025_payload_bytes']=(snd['pcm_11025_payload_bytes']+1)//2
+    manifest['sound_totals']=snd;manifest['mdl_totals']={'files':mdl_count,'input_bytes':mdl_in,'output_bytes':mdl_out,'delta_bytes':mdl_out-mdl_in}
+    manifest['notes'].append('Sound conversion target is mono signed 8-bit PCM at 11025 Hz; lower-rate and 4-bit ADPCM figures are footprint projections only.')
+    manifest['notes'].append('RP2350 keeps native BSP node/leaf data; MG24 node/leaf projection remains comparison data only.')
     return out,manifest
 
 def main():
-    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('input',type=Path);ap.add_argument('output',type=Path);ap.add_argument('--manifest',type=Path);ap.add_argument('--bsp-mode',choices=('analyze','copy'),default='analyze');ap.add_argument('--mnode-size',type=int,default=24);ap.add_argument('--mleaf-size',type=int,default=24);args=ap.parse_args()
-    files=read_pak(args.input);converted,manifest=convert(files,args.bsp_mode,args.mnode_size,args.mleaf_size);args.output.parent.mkdir(parents=True,exist_ok=True);pakbytes=write_pak(converted,args.output);manifest['pak_output_bytes']=pakbytes
+    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('input',type=Path);ap.add_argument('output',type=Path);ap.add_argument('--manifest',type=Path);ap.add_argument('--bsp-mode',choices=('analyze','copy'),default='analyze');ap.add_argument('--mnode-size',type=int,default=24);ap.add_argument('--mleaf-size',type=int,default=24);args=ap.parse_args();files=read_pak(args.input);converted,manifest=convert(files,args.bsp_mode,args.mnode_size,args.mleaf_size);args.output.parent.mkdir(parents=True,exist_ok=True);pakbytes=write_pak(converted,args.output);manifest['pak_output_bytes']=pakbytes
     if args.manifest:args.manifest.parent.mkdir(parents=True,exist_ok=True);args.manifest.write_text(json.dumps(manifest,indent=2),encoding='utf-8')
-    print(f'Python MCUPackConverter: {len(files)} files, {manifest["totals"]["input"]:,} -> {manifest["totals"]["output"]:,} payload bytes');print(f'PAK output: {pakbytes:,} bytes')
-    mt=manifest['mdl_totals'];print(f'MDL conversion: {mt["files"]} files, {mt["input_bytes"]:,} -> {mt["output_bytes"]:,} bytes ({mt["delta_bytes"]:+,})')
-    errors=[x for x in manifest['files'] if x['kind']=='mdl_error_passthrough']
-    if errors:
-        print(f'WARNING: {len(errors)} MDL conversion errors:');[print(f'  {x["name"]}: {x["error"]}') for x in errors]
-    bsp=[x for x in manifest['files'] if 'projected_mg24_bytes' in x]
-    if bsp:
-        raw=sum(x['input_bytes'] for x in bsp);proj=sum(x['projected_mg24_bytes'] for x in bsp);print(f'BSP MG24 projection: {raw:,} -> {proj:,} bytes ({proj-raw:+,})')
+    print(f'Python MCUPackConverter: {len(files)} files, {manifest["totals"]["input"]:,} -> {manifest["totals"]["output"]:,} payload bytes');print(f'PAK output: {pakbytes:,} bytes');mt=manifest['mdl_totals'];print(f'MDL conversion: {mt["files"]} files, {mt["input_bytes"]:,} -> {mt["output_bytes"]:,} bytes ({mt["delta_bytes"]:+,})');s=manifest['sound_totals'];print(f'Sound conversion: {s["files"]} WAV files, {s["source_file_bytes"]:,} -> {s["converted_bytes"]:,} bytes, {s["duration_seconds"]:.1f} s total, target 11025 Hz mono 8-bit')
 if __name__=='__main__':main()
