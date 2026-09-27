@@ -8,12 +8,17 @@
 enum { QPAK_BLOCK_BYTES = 4096, QPAK_ASSET_OFFSET = QRP_ASSET_OFFSET,
        QPAK_ASSET_CAPACITY = QRP_SAVE_OFFSET - QRP_ASSET_OFFSET,
        QPAK_SAVE_OFFSET = QRP_SAVE_OFFSET };
+typedef enum { QPAK_FORMAT_NONE=0, QPAK_FORMAT_BLOCKS=1, QPAK_FORMAT_QXIP1=2 } qpak_format_t;
 typedef struct {
     const uint8_t *image;
     uint32_t bytes, files, blocks, directory, block_table, payload;
+    uint32_t strings, texture_store, texture_store_bytes;
+    qpak_format_t format;
 } qpak_t;
 typedef struct {
     uint32_t size, first_block, block_count, crc32;
+    uint32_t direct_offset, kind;
+    bool direct;
 } qpak_file_t;
 /* A cache belongs to one consumer/core. Never share a mutable cache. */
 typedef struct {
@@ -26,7 +31,7 @@ bool qpak_open(qpak_t *pak, const void *image, size_t available);
 bool qpak_find(const qpak_t *pak, const char *name, qpak_file_t *file);
 bool qpak_read(const qpak_t *pak, const qpak_file_t *file, qpak_cache_t *cache,
                uint32_t offset, void *output, size_t length);
-/* NULL if any byte is compressed or physically noncontiguous. */
+/* Returns an immutable XIP pointer when the requested bytes are contiguous. */
 const uint8_t *qpak_map(const qpak_t *pak, const qpak_file_t *file,
                         uint32_t offset, size_t length);
 uint32_t qpak_crc32(const void *data, size_t length);
