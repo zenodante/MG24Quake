@@ -22,21 +22,33 @@ The 16 MiB flash must never be repopulated at level change. Useful MG24 format c
 
 ## Sound storage and playback
 
-Shareware `pak0` contains **190 WAV sounds**, totaling about **2.72 MiB** and **251 seconds**. 188 are already 11025 Hz / 8-bit and two are 22050 Hz / 16-bit. The former Python conversion to 11025 Hz mono signed 8-bit PCM occupied about **2.64 MiB**.
+Shareware `pak0` contains **190 WAV sounds**, totaling about **2.72 MiB** and **251 seconds**. 188 are 11025 Hz / 8-bit and two are 22050 Hz / 16-bit.
 
-RP2350 sound assets are now converted offline to **QAD1 block IMA ADPCM at 11025 Hz mono**. The sample rate is deliberately retained rather than dropping to 5512.5 or 8000 Hz. Four-bit ADPCM provides approximately half the PCM payload while retaining 11025-Hz temporal resolution.
+RP2350 sound assets are converted offline to **QAD1 block IMA ADPCM at 11025 Hz mono**. The sample rate is deliberately retained rather than dropping to 5512.5 or 8000 Hz. The measured converted sound set is **1.38 MiB**, saving about **1.34 MiB** relative to the original 2.72 MiB WAV files while retaining 11025-Hz temporal resolution.
 
 The QAD1 format uses **256 decoded samples per independent block**. Each block carries its own 16-bit predictor, IMA step index and decoded-sample count, followed by packed 4-bit IMA codes. The sound header records total decoded samples, loop start and block size. Independent blocks bound seek cost and allow Quake's mixer to begin/continue near an arbitrary sample position without decoding an entire sound into SRAM.
 
 Runtime policy is **ADPCM remains in XIP; Core 1 decodes incrementally into the existing mixer path**. Do not decompress complete sounds into SRAM. A playback channel keeps only small decoder state/cache. Looping and seeking use `sample_position / 256` to select a block, then decode within that block. The validated Core-1 display/input/audio ownership model remains unchanged; ADPCM decoding is an addition inside the audio source path, not a redesign of qservice or DMA.
 
-The theoretical 11025-Hz 4-bit payload for the current shareware sound set is about **1.32 MiB** versus 2.64 MiB PCM. Actual QAD1 size includes block headers and is reported by the conversion pipeline; use that measured size for Flash budgeting.
+The measured QAD1 footprint confirms that 256-sample independent blocks add only modest metadata overhead over the theoretical 4-bit payload, while providing bounded random access suitable for the mixer.
 
 ## Host tools and current Flash status
 
 `Tools/RP2350Pack/mcu_pack_converter.py` performs portable host conversion including alias MDL and QAD1 sound conversion. `Tools/RP2350Pack/xip_image_builder.py` builds QXIP and physically deduplicates exact BSP miptex records into a global texture store.
 
-Established measurements before QAD1 were: original aligned PAK **17.43 MiB**; Python converted image **16.86 MiB**; alias MDL **2.70 -> 2.20 MiB**; global texture saving **1.15 MiB**; real QXIP image **15.71 MiB**. Firmware reservation is now **1.00 MiB**, giving a **15.00 MiB asset budget** and a pre-ADPCM deficit of about **0.71 MiB**. Re-run the pipeline after QAD1 conversion to replace the theoretical sound estimate with the actual QXIP size/headroom.
+Current measured shareware footprint after the implemented conversions:
+
+- original aligned PAK: **17.43 MiB**;
+- Python converted PAK: **15.60 MiB**;
+- alias MDL: **2.70 -> 2.20 MiB**, saving about **0.50 MiB**;
+- sound: **2.72 MiB original WAV -> 1.38 MiB QAD1 block IMA ADPCM**, saving about **1.34 MiB**;
+- global exact BSP texture dedup: **1.15 MiB** real saving;
+- generated QXIP image: **15,160,036 bytes = 14.46 MiB**;
+- firmware reservation: **1.00 MiB**;
+- asset budget: **15.00 MiB**;
+- measured asset headroom: **about +0.54 MiB**.
+
+The shareware assets therefore fit the 16 MiB Flash plan with the current 1 MiB firmware reservation. No lightmap compression is required for capacity at this stage. Further resource compression should be driven by a measured need rather than added pre-emptively.
 
 ## Migration phases and status
 
@@ -57,17 +69,18 @@ Completed checkpoints:
 5. Python alias-MDL conversion saves about 0.50 MiB on the shareware set.
 6. QXIP global texture extraction produces a real 1.15 MiB texture saving.
 7. MG24 packed node/leaf storage was measured and rejected; native BSP nodes/leaves are retained.
-8. Sound inventory identified 190 WAVs / 251 s / 2.64 MiB converted PCM. QAD1 11025-Hz block IMA ADPCM is now the selected offline storage format and is implemented in the converter.
-9. Firmware reservation is 1.00 MiB, leaving a 15.00 MiB asset budget.
-10. Core-1 architecture remains frozen; only the sound-source decoder will be added to its existing mixer path.
+8. QAD1 11025-Hz block IMA ADPCM conversion is implemented and measured: 190 WAV files / 251 s become about 1.38 MiB, saving about 1.34 MiB versus the original WAV set.
+9. The generated QXIP asset image is now **14.46 MiB**, below the **15.00 MiB** asset budget with about **0.54 MiB measured headroom**.
+10. Resource-capacity work is sufficient for Phase 1; lightmap compression is deferred because it is not currently required.
+11. Core-1 architecture remains frozen; only the sound-source decoder will be added to its existing mixer path.
 
 Immediate next work:
 
-1. Re-run the asset pipeline and record the actual QAD1 converted sound total and real QXIP image/headroom.
-2. Integrate QXIP lookup into model/texture loading: level texture index -> global texture ID -> XIP miptex.
-3. Implement the matching QAD1 block IMA decoder in the existing Core-1 mixer source path, including loop/seek behavior, without whole-sound SRAM decompression.
-4. Remove RP2350 runtime flash-programming dependencies and load `start` directly through QXIP/XIP.
-5. Continue the MG24 engine source integration and profile SRAM/XIP hot paths before adding further format changes.
+1. Integrate QXIP lookup into model/texture loading: level texture index -> global texture ID -> XIP miptex.
+2. Implement the matching QAD1 block IMA decoder in the existing Core-1 mixer source path, including loop/seek behavior, without whole-sound SRAM decompression.
+3. Remove RP2350 runtime flash-programming dependencies and load `start` directly through QXIP/XIP.
+4. Continue the MG24 engine source integration and profile SRAM/XIP hot paths before adding further format changes.
+5. Measure the final linked firmware size against the 1.00 MiB reservation; revisit asset compression only if the firmware or runtime metadata materially reduces the current ~0.54 MiB asset margin.
 
 Phase 1 is not complete until the real engine links and `start` loads through the production XIP path.
 
@@ -81,7 +94,7 @@ Restore entities, alias models, sprites, particles, sky/turbulence, dynamic ligh
 
 ### Phase 4 - proven host-side hot formats: IN PROGRESS
 
-Alias MDL conversion, QXIP global texture dedup and QAD1 block IMA ADPCM are host-side transformations selected from measured RP2350 benefit. MG24 node/leaf packing is explicitly excluded.
+Alias MDL conversion, QXIP global texture dedup and QAD1 block IMA ADPCM are host-side transformations selected from measured RP2350 benefit. MG24 node/leaf packing is explicitly excluded. Capacity optimization is paused after reaching a measured 14.46 MiB QXIP image; additional transformations require profiling or a concrete Flash need.
 
 ### Phase 5 - spend extra SRAM for speed: NOT STARTED
 
