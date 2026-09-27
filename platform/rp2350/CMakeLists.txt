@@ -22,14 +22,18 @@ set(QRP_PLATFORM_SOURCES
 add_executable(quake_rp2350_bringup
     main.c qbsp.c qrender.c qcollision.c ${QRP_PLATFORM_SOURCES})
 
-# Phase-1 compile target.  RP2350 include directories intentionally precede
-# QuakeMG24/src so extMemory.h resolves to the memory-mapped-XIP shim rather
-# than the EFR32 interleaved-SPI implementation.
+# Phase-1 compile target. RP2350 include directories MUST precede QuakeMG24
+# directories: main.h and extMemory.h are intentional platform shims which
+# prevent EFR32/Silicon-Labs generated headers and SPI-flash policy from
+# leaking into the Pico build.
 add_library(quake_rp2350_engine_phase1 OBJECT
     qengine_probe.c qsys.c qpak.c qfiles.c
     ../../QuakeMG24/Quake/model.c)
+target_include_directories(quake_rp2350_engine_phase1 BEFORE PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${CMAKE_CURRENT_LIST_DIR}/boards")
 target_include_directories(quake_rp2350_engine_phase1 PRIVATE
-    . ../../QuakeMG24/Quake ../../QuakeMG24/src boards)
+    ../../QuakeMG24/Quake ../../QuakeMG24/src)
 target_compile_options(quake_rp2350_engine_phase1 PRIVATE -Wall -Wextra -O2)
 target_compile_definitions(quake_rp2350_engine_phase1 PRIVATE QUAKE_RP2350=1)
 target_link_libraries(quake_rp2350_engine_phase1 PRIVATE pico_stdlib)
@@ -47,10 +51,13 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/firmware-layout/pico_flash_region.ld"
     "FLASH(rx) : ORIGIN = ${xip_base}, LENGTH = ${firmware_limit}\n")
 pico_add_linker_script_override_path(quake_rp2350_bringup
     "${CMAKE_CURRENT_BINARY_DIR}/firmware-layout" FILES pico_flash_region.ld)
-target_include_directories(quake_rp2350_bringup PRIVATE . boards ../../QuakeMG24/src)
+target_include_directories(quake_rp2350_bringup BEFORE PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${CMAKE_CURRENT_LIST_DIR}/boards")
+target_include_directories(quake_rp2350_bringup PRIVATE ../../QuakeMG24/src)
 target_compile_options(quake_rp2350_bringup PRIVATE -Wall -Wextra -O2 -fstack-usage)
 target_compile_definitions(quake_rp2350_bringup PRIVATE
-    PICO_STACK_SIZE=0x1000 PICO_CORE1_STACK_SIZE=0x1000 PICO_FLASH_SPI_CLKDIV=4)
+    QUAKE_RP2350=1 PICO_STACK_SIZE=0x1000 PICO_CORE1_STACK_SIZE=0x1000 PICO_FLASH_SPI_CLKDIV=4)
 target_link_libraries(quake_rp2350_bringup PRIVATE pico_stdlib pico_multicore
     hardware_clocks hardware_vreg hardware_dma hardware_i2c hardware_pio hardware_pwm)
 pico_generate_pio_header(quake_rp2350_bringup "${CMAKE_CURRENT_LIST_DIR}/boards/st7789_parallel.pio")
