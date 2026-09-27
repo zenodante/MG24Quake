@@ -12,7 +12,8 @@ void qservice_frame_submit(unsigned slot,const uint8_t palette[768]);
 uint16_t qservice_buttons(void);
 uint16_t qservice_buttons_pressed(void);
 /* Mixer mutations are synchronized with core 1 using the same shared-mixer
- * spin-lock model as p8. Sound PCM storage must remain valid while active. */
+ * spin-lock model as p8. PCM or QAD1 source bytes must remain valid while
+ * active; production QAD1 data is immutable XIP and is decoded on core 1. */
 bool qservice_sound_start(unsigned channel,const qsound_t *sound,unsigned left,unsigned right);
 bool qservice_sound_stop(unsigned channel);
 bool qservice_sound_stop_all(uint32_t fence);
