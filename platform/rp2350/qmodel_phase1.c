@@ -14,12 +14,18 @@
 #include <stdio.h>
 #include <string.h>
 
+/* model.c owns these globals, but the full MG24 startup path supplies their
+ * backing storage outside Mod_Init().  The Phase-1 probe does not run Host_Init,
+ * so provide the missing model registry explicitly in SRAM. */
+extern model_t *mod_known;
+extern short mod_numknown;
+static model_t phase1_mod_known[MAX_MOD_KNOWN];
+
 /*
  * model_t stores only a 16-bit name index in the minimized MG24 build.  The
  * original implementation resolves that index through the generated QuakeC,
  * entity, submodel and pak string tables in pr_edict.c.  Phase 1 needs only
  * stable model names, so keep a small intern table with the same public ABI.
- * This avoids linking the entire entity/QuakeC runtime merely to load a BSP.
  */
 #define PHASE1_MODEL_STRINGS 192
 #define PHASE1_MODEL_NAME_MAX 64
@@ -62,12 +68,7 @@ char *getStringFromIndex(int16_t index)
     return phase1_model_strings[(uint16_t)index - 1u];
 }
 
-/*
- * MG24's missing-texture object normally comes from R_InitTextures().  The
- * loader only needs a valid texture_t pointer when a texinfo references a
- * missing miptex, so provide the same object shape here.  Pixel data is a
- * small checker pattern resident in SRAM; this path is diagnostic only.
- */
+/* MG24's missing-texture object normally comes from R_InitTextures(). */
 static uint8_t phase1_notexture_mip0[16u * 16u];
 static uint8_t phase1_notexture_mip1[8u * 8u];
 static uint8_t phase1_notexture_mip2[4u * 4u];
@@ -85,6 +86,11 @@ static void fill_checker(uint8_t *dst, unsigned width, unsigned height)
 
 void qmodel_phase1_init(void)
 {
+    memset(phase1_mod_known, 0, sizeof(phase1_mod_known));
+    mod_known = phase1_mod_known;
+    mod_numknown = 0;
+    phase1_model_string_count = 0;
+
     memset(&phase1_notexture, 0, sizeof(phase1_notexture));
     phase1_notexture.width = 16;
     phase1_notexture.height = 16;
@@ -96,16 +102,13 @@ void qmodel_phase1_init(void)
     fill_checker(phase1_notexture_mip1, 8, 8);
     fill_checker(phase1_notexture_mip2, 4, 4);
     fill_checker(phase1_notexture_mip3, 2, 2);
+
+    printf("phase1 model registry: %u entries x %u bytes at %p\n",
+           (unsigned)MAX_MOD_KNOWN, (unsigned)sizeof(model_t),
+           (void *)mod_known);
 }
 
-/*
- * On MG24 R_InitFlashSky() switches to separately converted skyXX resources.
- * RP2350 QXIP keeps the BSP miptex bytes directly addressable, and model.c has
- * already populated texture_t.extmemdata[] with those XIP addresses before
- * this callback.  For the Phase-1 loader there is therefore no storage work
- * to perform here.  Phase 2 will attach the original MG24 sky animation logic
- * to these direct-XIP source pixels.
- */
+/* RP2350 QXIP keeps BSP miptex bytes directly addressable. */
 void R_InitFlashSky(miptex_t *mt, char *modelName)
 {
     if (!mt)
