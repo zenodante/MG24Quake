@@ -18,6 +18,19 @@
 #define QUAKE_RP2350 1
 #endif
 
+/*
+ * RP2350 runtime ABI policy.
+ *
+ * MG24 deliberately compresses a number of RAM references into 16-bit indices
+ * or small offsets because that target has only 276 KiB RAM.  RP2350 must not
+ * inherit that restriction: persistent in-memory object references are native
+ * 32-bit ARM pointers.  On-disk BSP/MDL indices and QXIP file offsets remain
+ * indices/offsets; they are file-format data, not compressed RAM pointers.
+ */
+#ifndef QRP_NATIVE_RUNTIME_POINTERS
+#define QRP_NATIVE_RUNTIME_POINTERS 1
+#endif
+
 /* CMSIS compiler vocabulary used by the MG24 engine. */
 #ifndef __ASM
 #define __ASM __asm
