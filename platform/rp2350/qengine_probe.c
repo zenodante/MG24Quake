@@ -52,6 +52,9 @@ int main(void)
     printf("ABI bytes=%lu level_arena=%lu\n",
            (unsigned long)qengine_phase1_abi_probe(),
            (unsigned long)qlevel_arena_capacity());
+    printf("loader structs: model=%u surface=%u face-temp=%u bytes stack=%u\n",
+           (unsigned)sizeof(model_t), (unsigned)sizeof(msurface_t),
+           (unsigned)(sizeof(msurface_t) * 128u), (unsigned)PICO_STACK_SIZE);
 
     checkpoint(1, "opening QXIP at flash +1 MiB");
     if (!qpak_open(&pak, (const void *)(XIP_BASE + QPAK_ASSET_OFFSET),
