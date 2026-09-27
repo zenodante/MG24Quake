@@ -18,6 +18,15 @@
 #define QUAKE_RP2350 1
 #endif
 
+/* CMSIS normally supplies __ASM in the EFR32 build.  The RP2350 GCC target is
+ * also ARM and supports the same inline-assembly syntax used by the engine
+ * (e.g. USAT), so provide only the compiler spelling here instead of importing
+ * the Silicon Labs/CMSIS platform header tree.
+ */
+#ifndef __ASM
+#define __ASM __asm
+#endif
+
 /* Engine feature/configuration values inherited from the MG24 build. */
 #define FAST_CPU_SMALL_FLASH              0
 #define CORRECT_TABLE_ERROR               1
