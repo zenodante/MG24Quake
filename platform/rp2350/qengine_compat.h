@@ -21,14 +21,23 @@
 /*
  * RP2350 runtime ABI policy.
  *
- * MG24 deliberately compresses a number of RAM references into 16-bit indices
- * or small offsets because that target has only 276 KiB RAM.  RP2350 must not
- * inherit that restriction: persistent in-memory object references are native
- * 32-bit ARM pointers.  On-disk BSP/MDL indices and QXIP file offsets remain
- * indices/offsets; they are file-format data, not compressed RAM pointers.
+ * MG24 deliberately compresses RAM references and runtime structures because
+ * that target has only 276 KiB RAM.  RP2350 must not inherit that restriction:
+ * persistent in-memory object references use the normal 32-bit ARM pointer ABI.
+ * On-disk BSP/MDL indices and QXIP file offsets remain indices/offsets; those
+ * are serialized resource data, not compressed RAM pointers.
+ *
+ * NO_MINIMIZE is an existing MG24 engine switch and restores the original/full
+ * forms for structures which already have both implementations.  New RP2350
+ * conversions should additionally key pointer-vs-index choices on
+ * QRP_NATIVE_RUNTIME_POINTERS instead of adding another 16-bit representation.
  */
 #ifndef QRP_NATIVE_RUNTIME_POINTERS
 #define QRP_NATIVE_RUNTIME_POINTERS 1
+#endif
+
+#ifndef NO_MINIMIZE
+#define NO_MINIMIZE 1
 #endif
 
 /* CMSIS compiler vocabulary used by the MG24 engine. */
