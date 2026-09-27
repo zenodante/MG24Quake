@@ -1,29 +1,25 @@
 #!/usr/bin/env python3
-"""Build the RP2350 runtime asset image with a real global BSP texture store.
+"""Build the RP2350 XIP asset image with globally deduplicated BSP textures.
 
-This is deliberately a new RP2350 image format instead of pretending that a
-standard Quake BSP can reference bytes outside its own texture lump.  Every BSP
-is split into a compact level descriptor containing all non-texture lumps plus a
-per-level array of global texture IDs.  Exact miptex records are stored once in
-a global content-addressed texture store.  Same-name/different-content textures
-remain distinct because identity is SHA-256 of the complete miptex record.
-
-The current output is an offline/runtime-format proof: it makes the dedup saving
-real in one binary image and emits a manifest.  Engine-side lookup can then map
-(level texture index -> global texture ID -> XIP miptex bytes) without copying.
+QXIP keeps each map directly consumable by the existing MG24 brush-model loader:
+the level payload starts with a normal Quake BSP header and contains all ordinary
+lumps unchanged.  Its texture lump contains only the dmiptex directory; each
+signed dataofs points out of the level payload into the shared TEX1 texture
+store.  RP2350 XIP makes those cross-payload relative pointers valid without
+copying texture pixels or teaching the renderer a second model format.
 """
 from __future__ import annotations
 import argparse, hashlib, json, struct
 from collections import OrderedDict
 from pathlib import Path
-from mcu_pack_converter import read_pak, parse_bsp, LUMP_NAMES
+from mcu_pack_converter import read_pak, parse_bsp
 
 MAGIC=b'QXIP'; VERSION=1; ALIGN=4
 HEADER=struct.Struct('<4s9I')
-DIR=struct.Struct('<IIII') # name_off, kind, data_off, data_size
-LEVEL_HDR=struct.Struct('<4sI15I') # LVL1, texture_count, 15 section offsets; texture section is u32 IDs
-TEX_HDR=struct.Struct('<4sII') # TEX1, count, directory offset
-TEX_ENT=struct.Struct('<II32s') # record offset,size,sha256
+DIR=struct.Struct('<IIII')
+BSP_HEADER=struct.Struct('<I30I')       # version + 15 (fileofs,filelen)
+TEX_HDR=struct.Struct('<4sII')
+TEX_ENT=struct.Struct('<II32s')
 KIND_FILE=0; KIND_LEVEL=1
 
 def a4(n): return (n+3)&~3
@@ -39,7 +35,7 @@ def miptex_records(blob):
     for rel in rels:
         if rel<0: records.append(None); continue
         if rel+40>len(blob): raise ValueError('miptex header outside lump')
-        raw,w,h,*_=struct.unpack_from('<16s6I',blob,rel)
+        _,w,h,*_=struct.unpack_from('<16s6I',blob,rel)
         expected=40+(w*h*85)//64 if w and h else 40
         avail=max(0,min(nxt.get(rel,len(blob))-rel,len(blob)-rel))
         size=min(expected,avail) if avail else min(expected,len(blob)-rel)
@@ -48,57 +44,99 @@ def miptex_records(blob):
     return rels,records
 
 def build_level(data,tex_ids):
-    lumps=parse_bsp(data); out=bytearray(LEVEL_HDR.size); offsets=[0]*15
+    """Return mutable BSP-compatible payload plus texture-directory offset.
+
+    Texture dataofs entries are patched after the final QXIP/TEX1 layout is
+    known.  The texture lump deliberately reports only its directory bytes;
+    Mod_LoadTextures uses dataofs relative to that directory and can therefore
+    reach the shared XIP records outside this level payload.
+    """
+    lumps=parse_bsp(data)
+    out=bytearray(BSP_HEADER.size)
+    pairs=[]; tex_dir_off=None
     for i,(_,_,blob) in enumerate(lumps):
         while len(out)%ALIGN: out.append(0)
-        offsets[i]=len(out)
+        off=len(out)
         if i==2:
-            out.extend(struct.pack('<I',len(tex_ids)))
-            for tid in tex_ids: out.extend(struct.pack('<I',0xffffffff if tid is None else tid))
-        else: out.extend(blob)
-    LEVEL_HDR.pack_into(out,0,b'LVL1',len(tex_ids),*offsets)
-    return bytes(out)
+            tex_dir_off=off
+            out.extend(struct.pack('<i',len(tex_ids)))
+            out.extend(b'\xff\xff\xff\xff'*len(tex_ids))
+            size=4+4*len(tex_ids)
+        else:
+            out.extend(blob); size=len(blob)
+        pairs.extend((off,size))
+    version=struct.unpack_from('<I',data,0)[0]
+    BSP_HEADER.pack_into(out,0,version,*pairs)
+    return out,tex_dir_off
 
 def build(files):
     texture_by_hash=OrderedDict(); level_specs={}; input_tex_bytes=0
     for name,data in files.items():
         if not name.lower().endswith('.bsp'): continue
-        lumps=parse_bsp(data); texblob=lumps[2][2]; _,records=miptex_records(texblob); ids=[]
+        texblob=parse_bsp(data)[2][2]; _,records=miptex_records(texblob); ids=[]
         for rec in records:
             if rec is None: ids.append(None); continue
             input_tex_bytes+=len(rec); h=hashlib.sha256(rec).digest()
-            if h not in texture_by_hash: texture_by_hash[h]={'id':len(texture_by_hash),'data':rec,'uses':0}
+            if h not in texture_by_hash:
+                texture_by_hash[h]={'id':len(texture_by_hash),'data':rec,'uses':0}
             texture_by_hash[h]['uses']+=1; ids.append(texture_by_hash[h]['id'])
         level_specs[name]=ids
 
     unique_tex_bytes=sum(len(x['data']) for x in texture_by_hash.values())
     payloads=[]
     for name,data in files.items():
-        if name in level_specs: payloads.append((name,KIND_LEVEL,build_level(data,level_specs[name])))
-        else: payloads.append((name,KIND_FILE,data))
+        if name in level_specs:
+            level,tdir=build_level(data,level_specs[name])
+            payloads.append([name,KIND_LEVEL,level,tdir])
+        else:
+            payloads.append([name,KIND_FILE,bytearray(data),None])
 
-    # String table first, then directory, payloads, then texture store.
     strings=bytearray(); name_off={}
-    for name,_,_ in payloads:
+    for name,_,_,_ in payloads:
         name_off[name]=len(strings); strings.extend(name.encode('utf-8')+b'\0')
-    header_size=HEADER.size; str_off=header_size; dir_off=a4(str_off+len(strings)); data_off=a4(dir_off+DIR.size*len(payloads))
-    image=bytearray(data_off); image[str_off:str_off+len(strings)]=strings; dirs=[]; pos=data_off
-    for name,kind,data in payloads:
-        pos=a4(pos)
-        if len(image)<pos: image.extend(b'\0'*(pos-len(image)))
-        off=pos; image.extend(data); pos+=len(data); dirs.append((name_off[name],kind,off,len(data)))
-    tex_off=a4(len(image))
-    if len(image)<tex_off: image.extend(b'\0'*(tex_off-len(image)))
-    tex_start=tex_off; count=len(texture_by_hash); tex_dir_off=TEX_HDR.size; image.extend(TEX_HDR.pack(b'TEX1',count,tex_dir_off)); ent_pos=len(image); image.extend(b'\0'*(TEX_ENT.size*count))
-    tex_entries=[]
+    str_off=HEADER.size; dir_off=a4(str_off+len(strings)); data_off=a4(dir_off+DIR.size*len(payloads))
+
+    # Determine every payload's final image offset before writing TEX1.
+    pos=data_off; dirs=[]; payload_off={}
+    for name,kind,data,_ in payloads:
+        pos=a4(pos); payload_off[name]=pos
+        dirs.append((name_off[name],kind,pos,len(data))); pos+=len(data)
+    tex_off=a4(pos); count=len(texture_by_hash); tex_dir_off=TEX_HDR.size
+
+    # Determine final absolute position of every shared miptex record.
+    tex_cursor=tex_off+TEX_HDR.size+TEX_ENT.size*count
+    tex_abs=[0]*count; tex_entries=[]
     for h,x in texture_by_hash.items():
-        while len(image)%ALIGN:image.append(0)
-        roff=len(image)-tex_start; rec=x['data']; image.extend(rec); tex_entries.append((roff,len(rec),h))
-    for i,e in enumerate(tex_entries): TEX_ENT.pack_into(image,ent_pos+i*TEX_ENT.size,*e)
-    tex_size=len(image)-tex_start
+        tex_cursor=a4(tex_cursor); tex_abs[x['id']]=tex_cursor
+        tex_entries.append((tex_cursor-tex_off,len(x['data']),h,x['data']))
+        tex_cursor+=len(x['data'])
+
+    # Patch dmiptex dataofs.  Offsets are signed and relative to the beginning
+    # of the per-level texture directory, exactly as original Quake expects.
+    for name,kind,data,tdir in payloads:
+        if kind!=KIND_LEVEL: continue
+        base=payload_off[name]+tdir
+        for i,tid in enumerate(level_specs[name]):
+            rel=-1 if tid is None else tex_abs[tid]-base
+            if rel < -0x80000000 or rel > 0x7fffffff:
+                raise ValueError(f'texture relative offset out of int32 range in {name}')
+            struct.pack_into('<i',data,tdir+4+i*4,rel)
+
+    image=bytearray(data_off); image[str_off:str_off+len(strings)]=strings
+    for (name,kind,data,_),(_,_,off,_) in zip(payloads,dirs):
+        if len(image)<off: image.extend(b'\0'*(off-len(image)))
+        image.extend(data)
+    if len(image)<tex_off: image.extend(b'\0'*(tex_off-len(image)))
+    image.extend(TEX_HDR.pack(b'TEX1',count,tex_dir_off)); ent_pos=len(image)
+    image.extend(b'\0'*(TEX_ENT.size*count))
+    for i,(roff,size,h,rec) in enumerate(tex_entries):
+        absolute=tex_off+roff
+        if len(image)<absolute: image.extend(b'\0'*(absolute-len(image)))
+        image.extend(rec); TEX_ENT.pack_into(image,ent_pos+i*TEX_ENT.size,roff,size,h)
+    tex_size=len(image)-tex_off
     for i,d in enumerate(dirs): DIR.pack_into(image,dir_off+i*DIR.size,*d)
     HEADER.pack_into(image,0,MAGIC,VERSION,len(payloads),str_off,dir_off,data_off,tex_off,tex_size,count,len(image))
-    return bytes(image),{'format':'QXIP1','files':len(payloads),'levels':len(level_specs),'texture_records':sum(len(x) for x in level_specs.values()),'unique_textures':count,'input_texture_record_bytes':input_tex_bytes,'unique_texture_record_bytes':unique_tex_bytes,'texture_record_savings':input_tex_bytes-unique_tex_bytes,'image_bytes':len(image),'texture_store_offset':tex_off,'texture_store_bytes':tex_size}
+    return bytes(image),{'format':'QXIP1','level_format':'BSP29+external-miptex','files':len(payloads),'levels':len(level_specs),'texture_records':sum(len(x) for x in level_specs.values()),'unique_textures':count,'input_texture_record_bytes':input_tex_bytes,'unique_texture_record_bytes':unique_tex_bytes,'texture_record_savings':input_tex_bytes-unique_tex_bytes,'image_bytes':len(image),'texture_store_offset':tex_off,'texture_store_bytes':tex_size}
 
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('pak',type=Path); ap.add_argument('-o','--output',required=True,type=Path); ap.add_argument('--json',type=Path); args=ap.parse_args()
