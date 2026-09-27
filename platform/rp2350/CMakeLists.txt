@@ -22,24 +22,30 @@ set(QRP_PLATFORM_SOURCES
 add_executable(quake_rp2350_bringup
     main.c qbsp.c qrender.c qcollision.c ${QRP_PLATFORM_SOURCES})
 
-# Phase-1 compile target. RP2350 include directories precede QuakeMG24
-# directories for normal platform interfaces. qengine_compat.h is additionally
+# Phase-1 runtime model-loader probe. RP2350 include directories precede
+# QuakeMG24 directories for normal platform interfaces. qengine_compat.h is
 # force-included because quoted includes inside MG24 headers search their own
 # directory first; compiler/CMSIS vocabulary must therefore not depend on
 # header include order or on accidentally reaching an EFR32 main.h.
-add_library(quake_rp2350_engine_phase1 OBJECT
+set(QRP_PHASE1_SOURCES
     qengine_probe.c qsys.c qpak.c qfiles.c qlevel_arena.c
     ../../QuakeMG24/Quake/model.c)
+add_executable(quake_rp2350_engine_phase1 ${QRP_PHASE1_SOURCES})
 target_include_directories(quake_rp2350_engine_phase1 BEFORE PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${CMAKE_CURRENT_LIST_DIR}/boards")
 target_include_directories(quake_rp2350_engine_phase1 PRIVATE
     ../../QuakeMG24/Quake ../../QuakeMG24/src)
 target_compile_options(quake_rp2350_engine_phase1 PRIVATE
-    -Wall -Wextra -O2
+    -Wall -Wextra -O2 -fstack-usage
     "-include${CMAKE_CURRENT_LIST_DIR}/qengine_compat.h")
-target_compile_definitions(quake_rp2350_engine_phase1 PRIVATE QUAKE_RP2350=1)
-target_link_libraries(quake_rp2350_engine_phase1 PRIVATE pico_stdlib)
+target_compile_definitions(quake_rp2350_engine_phase1 PRIVATE
+    QUAKE_RP2350=1 PICO_STACK_SIZE=0x1000 PICO_FLASH_SPI_CLKDIV=4)
+target_link_libraries(quake_rp2350_engine_phase1 PRIVATE
+    pico_stdlib hardware_clocks hardware_vreg)
+pico_enable_stdio_usb(quake_rp2350_engine_phase1 1)
+pico_enable_stdio_uart(quake_rp2350_engine_phase1 0)
+pico_add_extra_outputs(quake_rp2350_engine_phase1)
 
 # Limit linkable Flash without changing the board's physical 16 MiB capacity.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/flash_layout.h")
@@ -54,6 +60,9 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/firmware-layout/pico_flash_region.ld"
     "FLASH(rx) : ORIGIN = ${xip_base}, LENGTH = ${firmware_limit}\n")
 pico_add_linker_script_override_path(quake_rp2350_bringup
     "${CMAKE_CURRENT_BINARY_DIR}/firmware-layout" FILES pico_flash_region.ld)
+pico_add_linker_script_override_path(quake_rp2350_engine_phase1
+    "${CMAKE_CURRENT_BINARY_DIR}/firmware-layout" FILES pico_flash_region.ld)
+
 target_include_directories(quake_rp2350_bringup BEFORE PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${CMAKE_CURRENT_LIST_DIR}/boards")
@@ -74,7 +83,17 @@ add_custom_command(TARGET quake_rp2350_bringup POST_BUILD
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/make_uf2.py"
         --firmware-only "${CMAKE_CURRENT_BINARY_DIR}/quake_rp2350_bringup.uf2"
         "${CMAKE_CURRENT_BINARY_DIR}/quake_rp2350_bringup.uf2")
+add_custom_command(TARGET quake_rp2350_engine_phase1 POST_BUILD
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/check_firmware.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/quake_rp2350_engine_phase1.bin"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/make_uf2.py"
+        --firmware-only "${CMAKE_CURRENT_BINARY_DIR}/quake_rp2350_engine_phase1.uf2"
+        "${CMAKE_CURRENT_BINARY_DIR}/quake_rp2350_engine_phase1.uf2")
 set_property(TARGET quake_rp2350_bringup APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/make_uf2.py"
+    "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/flash_layout.py"
+    "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/check_firmware.py")
+set_property(TARGET quake_rp2350_engine_phase1 APPEND PROPERTY LINK_DEPENDS
     "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/make_uf2.py"
     "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/flash_layout.py"
     "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/check_firmware.py")
