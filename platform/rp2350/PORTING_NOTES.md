@@ -24,7 +24,7 @@ The 16 MiB flash must never be repopulated at level change. Useful MG24 format c
 
 Shareware `pak0` contains **190 WAV sounds**, totaling about **2.72 MiB** and **251 seconds**. 188 are 11025 Hz / 8-bit and two are 22050 Hz / 16-bit.
 
-RP2350 sound assets are converted offline to **QAD1 block IMA ADPCM at 11025 Hz mono**. The measured converted sound set is **1.38 MiB**, saving about **1.34 MiB** relative to the original WAV files.
+RP2350 sound assets are converted offline to **QAD1 block IMA ADPCM at 11025 Hz mono**. The measured converted sound set is **1.38 MiB**, saving about **1.33 MiB (49.1%)** relative to the original WAV files.
 
 QAD1 uses **256 decoded samples per independent block**. Each block contains a 16-bit predictor, IMA step index, flags/count fields and packed 4-bit codes. The file header stores decoded sample count, loop start and block size.
 
@@ -34,11 +34,11 @@ Core 1 decodes QAD1 **incrementally from immutable XIP**. Each mixer channel car
 
 Looping or a non-sequential position rebuilds decoder state from the containing independent block and decodes at most 255 nibbles to reach the requested position. This makes arbitrary loop points work without a large seek table or SRAM cache. Normal sequential playback does not repeatedly seek or re-decode a block.
 
-Host tests cover QAD1 validation, incremental decoding, 11025->22050 sample-hold timing, invalid metadata rejection and a loop beginning inside a block. Hardware playback still needs validation with the generated converted asset image once the current resource-image path is connected to the bring-up target.
+Host tests cover QAD1 validation, incremental decoding, 11025->22050 sample-hold timing, invalid metadata rejection and a loop beginning inside a block. **Hardware playback has now been validated:** the converted shotgun sound plays correctly from the combined QXIP image through XIP -> QAD1 decoder -> Core-1 mixer -> DMA/PWM -> speaker.
 
 ## Host tools and current Flash status
 
-`Tools/RP2350Pack/mcu_pack_converter.py` performs portable host conversion including alias MDL and QAD1 sound conversion. `Tools/RP2350Pack/xip_image_builder.py` builds QXIP and physically deduplicates exact BSP miptex records into a global texture store.
+`Tools/RP2350Pack/mcu_pack_converter.py` performs portable host conversion including alias MDL and QAD1 sound conversion. `Tools/RP2350Pack/xip_image_builder.py` builds QXIP and physically deduplicates exact BSP miptex records into a global texture store. `Tools/RP2350Pack/run_pipeline.py` is the preferred one-command conversion entry point so MDL/QAD1 conversion is not accidentally bypassed. `Tools/RP2350Pack/make_uf2.py` validates the QXIP1 layout and combines firmware plus immutable assets without writing the persistent save partition.
 
 Current measured shareware footprint after implemented conversions:
 
@@ -47,12 +47,67 @@ Current measured shareware footprint after implemented conversions:
 - alias MDL: **2.70 -> 2.20 MiB**;
 - sound: **2.72 MiB original WAV -> 1.38 MiB QAD1**;
 - global exact BSP texture dedup: **1.15 MiB** saving;
-- generated QXIP image: **15,160,036 bytes = 14.46 MiB**;
+- generated BSP-compatible QXIP image: **15,161,212 bytes = 14.46 MiB**;
 - firmware reservation: **1.00 MiB**;
 - asset budget: **15.00 MiB**;
 - measured asset headroom: **about +0.54 MiB**.
 
 No lightmap compression is required for capacity at this stage.
+
+## Reproducible firmware + QXIP build
+
+The normal RP2350 build/flash workflow from the repository root is three stages. The examples below assume the original shareware PAK is `build/pak0.pak` and the RP2350 build directory is `build_rp2350`.
+
+### 1. Build firmware
+
+After CMake has been configured with the desired local Pico SDK/toolchain paths:
+
+```sh
+cmake --build build_rp2350 -j
+```
+
+This produces the firmware-only files including:
+
+```text
+build_rp2350/quake_rp2350_bringup.uf2
+build_rp2350/quake_rp2350_bringup.bin
+```
+
+### 2. Regenerate converted QXIP assets
+
+Always use the complete Python pipeline rather than invoking `xip_image_builder.py` directly on the original PAK. This ensures alias MDL conversion, QAD1 sound conversion, BSP-compatible level generation and global texture dedup are all applied:
+
+```sh
+python3 Tools/RP2350Pack/run_pipeline.py \
+  build/pak0.pak \
+  -o build_rp2350 \
+  --firmware-bytes 0x100000
+```
+
+The runtime asset image is:
+
+```text
+build_rp2350/quake-assets.qxip
+```
+
+For the current shareware set the expected report is approximately 14.46 MiB QXIP, 15.00 MiB asset budget and +0.54 MiB headroom. The current measured image is 15,161,212 bytes with 339 files, 21 levels, 396 unique global textures and zero sound-conversion errors.
+
+### 3. Combine firmware and assets into the flashable UF2
+
+```sh
+python3 Tools/RP2350Pack/make_uf2.py \
+  build_rp2350/quake_rp2350_bringup.uf2 \
+  build_rp2350/quake-assets.qxip \
+  build_rp2350/quake_rp2350_full.uf2
+```
+
+Flash this file to the board:
+
+```text
+build_rp2350/quake_rp2350_full.uf2
+```
+
+Do not use `quake_rp2350_bringup.uf2` when testing production QXIP resources: it contains firmware only. `make_uf2.py` validates QXIP1 and places the immutable asset partition after the 1 MiB firmware reservation while leaving the save partition untouched.
 
 ## Migration phases and status
 
@@ -67,23 +122,25 @@ Goal: compile the real MG24 engine against a thin RP2350 HAL, initialize it, and
 Completed checkpoints:
 
 1. RP2350 Phase-1 engine/ABI targets and read-only file/system boundaries exist.
-2. Real MG24 model/engine sources are being compiled so converted-format dependencies are exposed directly.
+2. Real MG24 `model.c` now compiles successfully for the RP2350 Phase-1 engine target through a forced `qengine_compat.h` compatibility layer; the engine no longer needs Silicon Labs generated headers merely to compile.
 3. Immutable resource placement was corrected to offline conversion plus direct XIP addressing rather than a generic SRAM arena.
 4. The Python host converter replaces the host-ABI-dependent C conversion path.
 5. Python alias-MDL conversion saves about 0.50 MiB on the shareware set.
 6. QXIP global texture extraction produces a real 1.15 MiB texture saving.
 7. MG24 packed node/leaf storage was measured and rejected; native BSP nodes/leaves are retained.
 8. QAD1 11025-Hz block IMA ADPCM conversion is implemented and measured at about 1.38 MiB for the shareware sound set.
-9. **QAD1 runtime decoding is implemented in the Core-1 mixer path**, including block validation, incremental decode, block transitions and arbitrary loop-point seek/rebuild. PCM remains supported for diagnostics.
-10. Host mixer tests exercise PCM and QAD1 playback behavior. Hardware QAD1 playback awaits resource-image integration/flash testing.
-11. The generated QXIP asset image is **14.46 MiB**, below the **15.00 MiB** asset budget with about **0.54 MiB headroom**.
-12. Resource-capacity work is sufficient for Phase 1; lightmap compression is deferred.
+9. **QAD1 runtime decoding is implemented and hardware validated in the Core-1 mixer path**, including block validation, incremental decode, block transitions and arbitrary loop-point seek/rebuild. PCM remains supported for diagnostics.
+10. QXIP1 is connected to the runtime asset/file interface. Ordinary files are mapped directly from XIP, and actual shotgun playback from converted QXIP/QAD1 assets works on RP2350 hardware.
+11. QXIP exposes zero-copy level lump and global TEX1 lookup. The host builder now emits BSP-compatible level texture directories whose relative offsets can point directly into the shared global TEX1 store, allowing the original MG24 texture pointer arithmetic to remain usable without SRAM texture copies.
+12. The regenerated BSP-compatible QXIP asset image is **15,161,212 bytes (14.46 MiB)**, below the **15.00 MiB** asset budget with about **0.54 MiB headroom**.
+13. Resource-capacity work is sufficient for Phase 1; lightmap compression is deferred.
+14. The reproducible firmware -> conversion pipeline -> combined UF2 procedure is documented above and the combined QXIP/QAD1 image has been successfully flashed and tested.
 
 Immediate next work:
 
-1. Connect the generated converted/QXIP sound entry path to the bring-up/runtime resource lookup and validate actual shotgun QAD1 playback on RP2350, including `audio_underruns` under simultaneous display activity.
-2. Integrate QXIP lookup into model/texture loading: level texture index -> global texture ID -> XIP miptex.
-3. Remove RP2350 runtime flash-programming dependencies and load `start` directly through QXIP/XIP.
+1. Connect the real `Mod_ForName` / `Mod_LoadModel` / `Mod_LoadBrushModel` path to the QXIP BSP-compatible `maps/start.bsp` payload.
+2. Validate that the original MG24 `Mod_LoadTextures()` follows the generated cross-QXIP relative `dataofs[]` directly into TEX1 and that all bounds/pointer assumptions remain valid on RP2350.
+3. Remove remaining RP2350 runtime flash-programming dependencies and load `start` entirely through immutable QXIP/XIP.
 4. Continue MG24 engine source integration and profile SRAM/XIP hot paths.
 5. Measure final linked firmware size against the 1.00 MiB reservation.
 
@@ -99,7 +156,7 @@ Restore entities, alias models, sprites, particles, sky/turbulence, dynamic ligh
 
 ### Phase 4 - proven host-side hot formats: IN PROGRESS
 
-Alias MDL conversion, QXIP global texture dedup and QAD1 block IMA ADPCM are host-side transformations selected from measured RP2350 benefit. MG24 node/leaf packing is explicitly excluded. QAD1 now has both host encoder and runtime incremental decoder.
+Alias MDL conversion, QXIP global texture dedup and QAD1 block IMA ADPCM are host-side transformations selected from measured RP2350 benefit. MG24 node/leaf packing is explicitly excluded. QAD1 now has both host encoder and runtime incremental decoder with successful hardware playback from QXIP.
 
 ### Phase 5 - spend extra SRAM for speed: NOT STARTED
 
