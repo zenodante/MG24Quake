@@ -2,228 +2,101 @@
 
 Reference: [next-hack, original MG24 Quake port, 2024-09-22](https://next-hack.com/index.php/2024/09/22/quake-port-to-sparkfun-and-arduino-nano-matter-boards-using-only-276-kb-ram/).
 
-This document is the architectural plan for the RP2350 port.  The central rule
-is: **MG24 is the engine/renderer baseline, not the RP2350 hardware baseline.**
-Keep the author's Quake algorithm and performance work; replace hardware and
-memory compromises that existed only because MG24 had 276 kB RAM and external
-SPI storage.
+Central rule: **MG24 is the engine/renderer baseline, not the RP2350 hardware baseline.** Keep the author's Quake algorithm and performance work; replace hardware and memory compromises that existed only because MG24 had 276 kB RAM and external SPI storage.
 
 ## Fixed RP2350 architecture
 
-The core-1 service architecture is already validated and is not part of the
-renderer rewrite.
+The Core-1 service architecture is validated and is frozen unless integration exposes a measured defect.
 
-- Core 0 runs the Quake engine and the MG24-derived software renderer.
-- There is one 320x200 8-bit indexed framebuffer (64,000 bytes).
-- Core 1 owns display conversion/output, input polling, and audio mixing/output.
-- Display conversion uses two independent 320-pixel RGB565 row buffers.  Core 1
-  converts one framebuffer row at a time and ping-pongs the row buffers with
-  DMA.  Do not reintroduce multi-row staging buffers or a second full frame.
-- Core 1 polls the keyboard/input path at the validated rate and keeps the
-  existing qservice/qmix/board-driver ownership model.
-- Engine integration must adapt to qservice; do not transplant MG24 display,
-  audio, input, or DMA scheduling into the RP2350 service core.
+- Core 0 runs the Quake engine and MG24-derived software renderer.
+- One 320x200 8-bit indexed framebuffer (64,000 bytes).
+- Core 1 owns display conversion/output, input polling and audio mixing/output.
+- Display conversion uses two independent 320-pixel RGB565 row buffers, one row per DMA transfer. Do not reintroduce multi-row staging buffers or a second full framebuffer.
+- Keep the existing qservice/qmix/board-driver ownership model.
+- The single framebuffer has an ownership barrier: Core 0 renders only while Core 1 is not consuming it.
 
-The single framebuffer has an ownership barrier: Core 0 may render only when
-Core 1 is not consuming that frame.  A second full framebuffer is not the
-solution to synchronization bugs.
+## Renderer decision
 
-## Renderer: discard the RP2350 reference renderer
+`platform/rp2350/qrender.c` is a bring-up/reference rasterizer only. Its triangle fan, bounding-box walk, per-pixel barycentric floating point, perspective division and light interpolation must not evolve into the production renderer.
 
-`platform/rp2350/qrender.c` is a bring-up/reference rasterizer.  Its
-bounding-box triangle walk, per-pixel barycentric floating point, per-pixel
-perspective division and light interpolation are intentionally not the final
-renderer.  It must not be optimized into a second Quake renderer.
+Production uses the existing MG24 Quake pipeline: `r_main/r_bsp/r_edge/r_surf/r_sky`, `d_edge/d_scan/d_surf`, and related sprite/alias paths. Preserve the edge/surface/span architecture, fixed-point and packed Cortex-M optimizations, especially the optimized `D_DrawSpans8` family.
 
-The production path shall use the existing MG24 Quake rendering pipeline,
-including the relevant code in:
+`qbsp.c`, `qcollision.c` and `qrender.c` remain temporarily for hardware diagnostics. They are not a parallel production engine and leave the production build as the corresponding MG24 paths become functional.
 
-- `r_main.c`, `r_bsp.c`, `r_edge.c`, `r_surf.c`, `r_sky.c`
-- `d_edge.c`, `d_scan.c`, `d_surf.c`, and related sprite/alias paths
-- the MG24 fixed-point, approximate-division, packed-operation and span-loop
-  optimizations where they remain correct on Cortex-M33.
+## RP2350 memory/storage policy
 
-In particular, retain the edge/surface/span architecture and the optimized
-`D_DrawSpans8` family.  Do not replace it with triangle fans or a new generic
-rasterizer.
+RP2350 has 520 kB SRAM, two cores and 16 MiB memory-mapped XIP flash.
 
-`qbsp.c`, `qcollision.c`, and `qrender.c` may remain temporarily as diagnostic
-code while the engine is brought up.  They are not a parallel production
-engine.  Once the corresponding MG24 model/collision/render paths are running,
-the production target must stop compiling the redundant diagnostic path.
+- Spend SRAM to reduce CPU/XIP traffic: renderer working sets, hot tables, surface/texture caches and mutable model state are candidates.
+- Keep immutable bulk resources in XIP where layout permits safe efficient access.
+- Do not preserve MG24 RAM aliasing solely to save a few kB when it complicates asynchronous Core-1 ownership.
+- Do not preserve MG24 external-SPI interleaving or EFR32 display/audio/input/DMA/flash code.
+- Level changes must never populate a second runtime flash cache.
 
-## What to preserve from MG24
+Preferred resource hierarchy is direct contiguous XIP pointer, then bounded XIP reader, then SRAM cache/copy for hot or mutable data, then host-derived representation when it removes measured runtime cost.
 
-Preserve optimizations whose purpose is CPU efficiency or compact hot runtime
-state:
+## Host tools
 
-- BSP/PVS traversal and edge/span visibility pipeline;
-- fixed-point hot loops and reduced division;
-- Cortex-M packed arithmetic that is valid on RP2350 Cortex-M33;
-- generated/native QuakeC and compact gameplay/entity representation;
-- mip selection, span drawing, surface/light processing and other measured
-  renderer optimizations;
-- precomputation that removes expensive per-frame work when its storage cost is
-  reasonable on the RP2350.
+`Tools/MCUPackConverter` contains useful MG24 transformations (alias triangle data, sky preprocessing, BSP modification, sound resampling) mixed with MG24 flash/RAM workarounds. Audit each consumer individually.
 
-Do not silently revert an MG24 optimization to original desktop Quake merely
-because RP2350 has more RAM.  First identify whether the optimization was for
-speed or only for memory/storage pressure.
+`Tools/RP2350Pack/pack.py` is the lossless diagnostic QRP container and may compress texture/lightmap pages; compressed pages are therefore not the default production hot-resource format.
 
-## What to change for RP2350
+`Tools/RP2350Pack/prepare_xip.py` provides the production staging baseline: merge pak0 plus optional pak1 with later-PAK override semantics, keep data uncompressed, align entries for XIP, and perform no runtime level-cache writes.
 
-RP2350 has 520 kB SRAM, two cores, and a 16 MiB memory-mapped XIP flash.  Use
-those differences deliberately.
+Classify every MG24 conversion dependency as: speed transformation (retain host-side), RAM workaround (normally remove/use SRAM), external-flash workaround (remove), or format convenience (choose by measured XIP/runtime cost).
 
-- Spend SRAM to reduce CPU/XIP traffic: renderer working sets, hot lookup tables,
-  surface/texture cache and mutable model state are candidates.
-- Keep dynamic/hot/random-access structures in SRAM when profiling shows XIP
-  cache misses are material.
-- Keep immutable bulk resources in XIP when their on-disk representation can be
-  consumed safely and efficiently.
-- Do not preserve MG24 RAM aliasing/reuse merely to save a few kB if it creates
-  lifetime coupling with asynchronous Core-1 display ownership.
-- Do not preserve MG24 external-SPI-flash interleaving or EFR32-specific DMA,
-  display, input, audio, timing, or flash code.
+## Migration phases and status
 
-A proposed RAM budget must be checked against the linker map and measured peak
-runtime use.  The 64 kB framebuffer is fixed; the remaining SRAM should be used
-as a performance resource rather than left artificially constrained to MG24's
-276 kB design point.
+### Phase 0 - validated platform services: COMPLETE/FROZEN
 
-## XIP resource strategy
+qservice/qmix, ST7789 DMA, one-line RGB565 ping-pong conversion, input and audio on Core 1 are the known-good platform layer.
 
-The 16 MiB flash is a persistent immutable resource store.  **Changing levels
-must never rewrite/copy a level into a second internal-flash cache.**  All
-resource transformation that is independent of gameplay happens on the host.
+### Phase 1 - build the real MG24 engine on RP2350: IN PROGRESS
 
-Preferred runtime hierarchy:
+Goal: compile the MG24 Quake engine against a thin RP2350 HAL, initialize the engine and load `start` from immutable XIP without level-time flash programming.
 
-1. direct pointer into contiguous raw XIP data when layout/alignment permit;
-2. bounded XIP reader for immutable data that cannot safely be cast;
-3. SRAM cache/copy for hot or mutable data;
-4. host-side derived representation when it measurably removes expensive
-   runtime work.
+Implemented checkpoints:
 
-Never treat raw BSP/MDL disk structures as native runtime structures without
-proving size, packing, alignment, endianness and pointer/index representation.
+1. `quake_rp2350_engine_phase1` object target now exists beside the old diagnostic executable. This is the migration target; the diagnostic remains available for hardware regression testing.
+2. The Phase-1 target includes the actual `QuakeMG24/Quake` headers and compiles an ABI probe against `quakedef.h`, `r_local.h`, `d_local.h` and `sys.h`. This intentionally exposes MG24 assumptions rather than hiding them behind a new renderer/data model.
+3. Existing `qfiles.c` already implements the Quake `Sys_FileOpenRead/Close/Seek/Read/Time` API over qpak and supports `qfiles_map()` for contiguous immutable XIP ranges. This is the initial read-only file HAL. Write APIs remain disabled by design.
+4. The RP2350 host tooling now has an uncompressed XIP staging path (`prepare_xip.py`), so Phase 1 does not depend on level-time internal-flash caching.
+5. Core-1 service code is not linked into or modified by this checkpoint; its interface remains the integration boundary.
 
-### Host tools audit
+Next Phase-1 work, in order:
 
-The repository currently contains two different resource approaches:
+- Compile the MG24 engine source groups into `quake_rp2350_engine_phase1` and inventory compile failures by category: EFR32 hardware dependency, converted-PAK dependency, MG24 flash-cache dependency, or ordinary platform HAL dependency.
+- Implement RP2350 `Sys_FloatTime`, console/error stubs and remaining non-file `sys.h` boundary functions without importing EFR32 code.
+- Audit `model.c` first: remove `storeToInternalFlash`/level-cache assumptions and adapt model/BSP loading to immutable XIP plus bounded SRAM metadata while preserving speed-relevant converted representations.
+- Audit the generated QuakeC/entity path and allocator assumptions against RP2350 SRAM/address width; retain compact representation where it remains valid.
+- Add the production entry point only after the engine object set compiles cleanly. The first runtime milestone is engine initialization + `start` load, not world rendering.
 
-- `Tools/MCUPackConverter`: the original MG24 converter.  It already performs
-  useful engine-specific transformations (alias triangle data, prerendered sky,
-  BSP modification, sound resampling, string generation), but it also embodies
-  assumptions made for MG24 flash caching and storage.  Reuse transformations
-  individually after auditing their consumers; do not adopt the whole format
-  blindly.
-- `Tools/RP2350Pack/pack.py`: a lossless paged QRP2350 container.  It preserves
-  original files but may LZ4-compress texture/lightmap blocks.  This is useful
-  for compatibility/diagnostics, but compressed pages are not direct XIP and
-  therefore are not the production hot-resource format by default.
+Phase 1 is **not yet complete**: the real engine source set is not yet linked and `start` is not yet loaded through `model.c`. Do not report the diagnostic BSP loader as this milestone.
 
-`Tools/RP2350Pack/prepare_xip.py` is the new minimal production staging tool. It
-merges `pak0.pak` and optional `pak1.pak` with later-PAK override semantics and
-emits an uncompressed 4-byte-aligned conventional PAK.  This provides a clean
-immutable XIP baseline and fixes the missing host-side retail PAK merge without
-introducing level-time flash writes.
+### Phase 2 - restore MG24 world rendering: NOT STARTED
 
-The tool intentionally does not yet duplicate MG24 preprocessing.  During
-engine integration, each MG24 converted-format dependency must be classified:
+Bring up BSP/PVS -> edge -> surface -> span rendering into the single indexed framebuffer. Core 1 displays completed frames unchanged. First visual milestone is `start` rendered through MG24, not `qrender.c`, with Core-0 render time measured independently of LCD transfer.
 
-- **speed transformation**: port it into an RP2350 host converter and keep the
-  derived bytes in XIP;
-- **RAM workaround**: normally remove it and use RP2350 SRAM instead;
-- **external-flash workaround**: remove it;
-- **format convenience only**: choose whichever representation gives simpler
-  bounded XIP access without slowing hot paths.
+### Phase 3 - model/collision/game integration: NOT STARTED
 
-This classification prevents both extremes: blindly retaining all MG24 flash
-machinery, or throwing away the author's performance work as the old
-`qrender.c` path did.
+Use MG24/Quake model/hull structures and normal engine collision. Retire qbsp/qcollision from production as replacements become functional. Restore brush entities, alias models, sprites, particles, sky, turbulence, dynamic lighting and gameplay incrementally.
 
-## Migration phases
+### Phase 4 - proven host-side hot formats: NOT STARTED
 
-### Phase 0 - freeze validated platform services
+Port only speed-relevant MCUPackConverter transformations. Generate derived bytes once on the PC and store them directly in XIP. Never populate a runtime flash cache.
 
-Treat qservice/qmix, ST7789 DMA, one-line RGB565 ping-pong conversion, input and
-audio on Core 1 as the known-good platform layer.  Only change these when a
-measured integration defect requires it.
+### Phase 5 - spend extra SRAM for speed: NOT STARTED
 
-### Phase 1 - build the real MG24 engine on RP2350
+Measure linker/runtime high-water use and XIP-sensitive paths, then enlarge surface/texture/hot-data caches within a documented SRAM budget.
 
-Create/convert the RP2350 production target so it compiles the MG24 Quake engine
-and renderer instead of `qrender.c`.  Add a thin RP2350 HAL for time, file/XIP,
-input events, audio submission and frame ownership.  Resolve EFR32 dependencies
-at the HAL boundary rather than forking renderer algorithms.
+### Phase 6 - RP2350 CPU optimization: NOT STARTED
 
-First milestone: engine initialization and loading `start` using immutable XIP
-resources, with no level-time flash programming.
-
-### Phase 2 - restore MG24 world rendering
-
-Bring up BSP/PVS -> edge -> surface -> span rendering and write directly into
-the single indexed framebuffer.  Preserve the MG24 optimized span loops.  Use
-Core 1 unchanged to display completed frames.
-
-First visual milestone: `start` world rendered through the MG24 renderer, not
-`qrender.c`.  Record core-0 render time independently of LCD transfer time.
-
-### Phase 3 - model/collision/game integration
-
-Use the MG24/Quake model and hull structures and normal engine collision path.
-Retire `qbsp/qcollision` from the production target as their replacements become
-functional.  Restore brush entities, alias models, sprites, particles, sky,
-water/turbulence, dynamic lighting and gameplay incrementally.
-
-### Phase 4 - host conversion for proven hot formats
-
-Audit every place where the MG24 engine expects MCUPackConverter output.  Port
-only the speed-relevant transformations into RP2350 host tooling.  Derived data
-is generated once on the PC and stored directly in the XIP resource image.
-There is no runtime flash cache population.
-
-### Phase 5 - use extra SRAM for speed
-
-After the real renderer works, measure linker RAM, runtime high-water mark, XIP
-miss-sensitive paths and frame breakdown.  Increase surface/texture/hot-data
-caches within a documented SRAM budget.  Prefer measured cache enlargement over
-new arithmetic micro-optimizations.
-
-### Phase 6 - RP2350-specific CPU optimization
-
-Only after profiling the MG24 baseline, tune Cortex-M33-specific hot loops,
-compiler options, SRAM placement and XIP access patterns.  Keep before/after
-frame-time measurements.  Do not optimize display-core code to fix a Core-0
-renderer bottleneck.
+Only after profiling the MG24 baseline, tune Cortex-M33 hot loops, compiler options, SRAM placement and XIP access patterns with before/after measurements.
 
 ## Performance instrumentation
 
-For each playable milestone record at least:
-
-- total Core-0 frame time;
-- world edge/BSP time, surface setup time and span/raster time where practical;
-- number of visible surfaces/edges/spans or equivalent renderer counters;
-- XIP bytes/cache/refill proxies where measurable;
-- Core-1 displayed frames and display queue stalls;
-- audio underruns;
-- peak SRAM/high-water marks.
-
-The existing 3-5 FPS diagnostic is a measurement of the temporary reference
-renderer, not a target baseline for the MG24 renderer.
+At playable milestones record Core-0 frame time, BSP/edge/surface/span breakdown where practical, renderer counters, XIP/cache proxies where measurable, Core-1 display stalls, audio underruns and peak SRAM. The old 3-5 FPS number measures the temporary reference renderer and is not the MG24 baseline.
 
 ## Completion criteria
 
-The migration is complete when the production RP2350 target:
-
-1. runs the MG24-derived Quake engine/renderer rather than `qrender.c`;
-2. uses the validated Core-1 display/input/audio service unchanged in structure;
-3. renders through one 320x200 indexed framebuffer and two one-row RGB565 DMA
-   buffers;
-4. loads immutable resources from the 16 MiB XIP image without level-change
-   flash writes;
-5. retains speed-relevant MG24 preprocessing/renderer optimizations;
-6. uses RP2350's additional SRAM as measured cache/working memory;
-7. runs world, entities, collision, audio/input and demo/gameplay with profiling
-   counters sufficient to guide subsequent optimization.
+The migration is complete when the production RP2350 target runs the MG24-derived engine/renderer, uses the validated Core-1 service structure, uses one indexed framebuffer plus two one-row RGB565 DMA buffers, loads immutable resources from 16 MiB XIP without level-change flash writes, retains speed-relevant MG24 optimizations, spends extra SRAM where measurement justifies it, and runs world/entities/collision/audio/input/demo/gameplay with useful profiling counters.
