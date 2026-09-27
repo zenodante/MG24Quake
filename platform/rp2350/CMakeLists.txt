@@ -25,9 +25,11 @@ add_executable(quake_rp2350_bringup
 # Phase-1 runtime model-loader probe. Use real platform-independent MG24
 # implementations as dependencies become necessary. Only platform/flash
 # services are replaced by RP2350 files: qlevel_arena.c intentionally replaces
-# MG24 internalFlash.c, while z_zone.c and common.c remain the real engine code.
+# MG24 internalFlash.c. qmodel_phase1.c keeps the probe from prematurely
+# dragging in the complete QuakeC/entity and renderer graphs; its narrow ABI is
+# replaced by the original subsystems as Phase 2/3 integrate them.
 set(QRP_PHASE1_SOURCES
-    qengine_probe.c qsys.c qpak.c qfiles.c qlevel_arena.c
+    qengine_probe.c qsys.c qpak.c qfiles.c qlevel_arena.c qmodel_phase1.c
     ../../QuakeMG24/Quake/model.c
     ../../QuakeMG24/Quake/z_zone.c
     ../../QuakeMG24/Quake/common.c)
@@ -43,6 +45,11 @@ target_compile_options(quake_rp2350_engine_phase1 PRIVATE
 target_link_options(quake_rp2350_engine_phase1 PRIVATE -Wl,--gc-sections)
 target_compile_definitions(quake_rp2350_engine_phase1 PRIVATE
     QUAKE_RP2350=1 PICO_STACK_SIZE=0x1000 PICO_FLASH_SPI_CLKDIV=4)
+# common.c contains the legacy flat-PAK implementation of this symbol. Keep
+# compiling the real common.c for Q_* helpers, but rename only that legacy
+# definition so qfiles.c remains the production QXIP implementation.
+set_source_files_properties(../../QuakeMG24/Quake/common.c PROPERTIES
+    COMPILE_DEFINITIONS "getExtMemPointerToFileInPak=mg24_legacy_getExtMemPointerToFileInPak")
 target_link_libraries(quake_rp2350_engine_phase1 PRIVATE
     pico_stdlib hardware_clocks hardware_vreg)
 pico_enable_stdio_usb(quake_rp2350_engine_phase1 1)
