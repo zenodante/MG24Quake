@@ -796,7 +796,9 @@ void _Host_Frame(float time)
 // fetch results from server
     if (_g->cls.state == ca_connected)
     {
-#if WIN32
+// A changelevel reconnect legitimately draws a loading plaque before
+        // the new server messages are read by the local client.
+#if WIN32 && !QMAC_GAME
 	    if (screenUpdated)
 	        FIXME("Screen updated before!");
         #endif

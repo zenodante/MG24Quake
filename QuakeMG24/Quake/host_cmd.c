@@ -359,7 +359,7 @@ void Host_Changelevel_f(void)
         Con_Printf("Only the server may changelevel\n");
         return;
     }
-    FIXME("HOST CHANGE LEVEL");
+    /* Continue through the normal spawn-parameter and reconnect path. */
     SV_SaveSpawnparms();
     strcpy(level, Cmd_Argv(1));
     SV_SpawnServer(level, false);

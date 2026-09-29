@@ -8,7 +8,9 @@ from pathlib import Path
 from unicorn import *
 from unicorn.arm_const import *
 from elftools.elf.elffile import ELFFile
-p=argparse.ArgumentParser(description=__doc__);p.add_argument('elf',type=Path);p.add_argument('assets',type=Path);p.add_argument('--frames',type=int,default=60);p.add_argument('--fault-test',action='store_true');p.add_argument('--tick-us',type=int,default=16667);p.add_argument('--teleport-test',choices=['easy','normal','hard']);p.add_argument('--input-matrix',action='store_true');p.add_argument('--buttons',action='store_true');p.add_argument('--trace-commands',action='store_true');p.add_argument('--capture',type=Path);p.add_argument('--cycle',type=int,default=0);p.add_argument('--json',type=Path);a=p.parse_args()
+p=argparse.ArgumentParser(description=__doc__);p.add_argument('elf',type=Path);p.add_argument('assets',type=Path);p.add_argument('--frames',type=int,default=60);p.add_argument('--fault-test',action='store_true');p.add_argument('--tick-us',type=int,default=16667);p.add_argument('--episode-test',action='store_true');p.add_argument('--teleport-test',choices=['easy','normal','hard']);p.add_argument('--input-matrix',action='store_true');p.add_argument('--buttons',action='store_true');p.add_argument('--trace-commands',action='store_true');p.add_argument('--capture',type=Path);p.add_argument('--changelevel-cycle',action='store_true');p.add_argument('--cycle',type=int,default=0);p.add_argument('--json',type=Path);a=p.parse_args()
+if a.changelevel_cycle and (a.cycle<1 or a.frames<2*a.cycle):p.error('--changelevel-cycle requires --cycle and at least two cycles')
+if a.episode_test and a.teleport_test:p.error('choose either --episode-test or --teleport-test')
 elf_sha256=hashlib.sha256(a.elf.read_bytes()).hexdigest();asset_sha256=hashlib.sha256(a.assets.read_bytes()).hexdigest()
 u=Uc(UC_ARCH_ARM,UC_MODE_THUMB|UC_MODE_MCLASS);u.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_M33)
 u.mem_map(0x10000000,0x1000000);u.mem_map(0x20000000,0x82000);u.mem_map(0xe0000000,0x100000)
@@ -25,6 +27,7 @@ regs=[UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3]
 frames=0;clock=0;commands=[];map_stats={};input_checks=[];weapon_impulses=0;
 matrix=['in_moveright','in_attack',None,'in_moveleft','in_forward','in_back','in_left','in_right','in_lookup','in_lookdown'];
 start=time.time();failure=None
+changelevel_triggers=0
 clipped_submodel_calls=0
 teleport_events=0;teleport_destination=False;player_pointer=None;player_origin=None;teleport_functions=[]
 
@@ -41,7 +44,9 @@ def hook(name,fn):
         at=symbols[name]&~1;u.hook_add(UC_HOOK_CODE,lambda uc,addr,size,user:fn(),begin=at,end=at)
 def error():
     global failure
-    failure=string(u.reg_read(UC_ARM_REG_R0));print('SYS_ERROR:',failure,[hex(u.reg_read(r)) for r in regs],flush=True);u.emu_stop()
+    failure=string(u.reg_read(UC_ARM_REG_R0))
+    if failure=='%s at %s:%d':failure=f'{string(u.reg_read(regs[1]))} at {string(u.reg_read(regs[2]))}:{u.reg_read(regs[3])}'
+    print('SYS_ERROR:',failure,[hex(u.reg_read(r)) for r in regs],flush=True);u.emu_stop()
 def tick():
     global clock
     clock+=a.tick_us;u.reg_write(UC_ARM_REG_R1,0);ret(clock)
@@ -57,13 +62,14 @@ def submit():
         if index<len(matrix) and phase in (3,7) and matrix[index]:
             held=bool(u.mem_read(symbols[matrix[index]]+2,1)[0]&1)
             input_checks.append(dict(button=index,action=matrix[index],phase=phase,held=held,passed=held==(phase==3)))
-    if a.teleport_test:
+    if a.teleport_test or a.episode_test:
+        if a.episode_test and mapname=='e1m1':commands.append('-forward')
         if frames==12:commands.append('+forward')
-        if teleport_destination and frames%10==0:commands.append('-forward')
+        if a.teleport_test and teleport_destination and frames%10==0:commands.append('-forward')
     if a.cycle:
         maps=['start','e1m1','e1m2','e1m3','e1m4','e1m5','e1m6','e1m7','e1m8']
         phase=frames%a.cycle
-        if phase==0 and frames//a.cycle<len(maps):commands.append('map '+maps[frames//a.cycle])
+        if phase==0 and frames//a.cycle<len(maps):commands.append(('changelevel ' if a.changelevel_cycle else 'map ')+maps[frames//a.cycle])
         if phase==20:commands.extend(['+attack','+forward'])
         if phase==45:commands.extend(['-attack','-forward'])
     if frames%10==0:print('frame',frames,'elapsed',round(time.time()-start,1),flush=True)
@@ -107,15 +113,19 @@ def clipped_submodel():
     global clipped_submodel_calls
     clipped_submodel_calls+=1
 hook('R_DrawSolidClippedSubmodelPolygons',clipped_submodel)
-if a.teleport_test:
+def changelevel_trigger():
+    global changelevel_triggers
+    changelevel_triggers+=1
+hook('qcc_changelevel',changelevel_trigger)
+if a.teleport_test or a.episode_test:
     def origin():
         global player_pointer,player_origin,teleport_destination
         v=struct.unpack('<3f',struct.pack('<2I',u.reg_read(regs[2]),u.reg_read(regs[3]))+bytes(u.mem_read(u.reg_read(UC_ARM_REG_SP),4)))
         if player_pointer is None and v==(544.0,288.0,33.0):
-            player_pointer=u.reg_read(regs[1]);v=({'easy':232.0,'normal':544.0,'hard':864.0}[a.teleport_test],1300.0,32.0)
+            player_pointer=u.reg_read(regs[1]);v=(0.0,1628.0,128.0) if a.episode_test else ({'easy':232.0,'normal':544.0,'hard':864.0}[a.teleport_test],1300.0,32.0)
             for r,val in zip(regs[2:],struct.unpack('<3I',struct.pack('<3f',*v))):u.reg_write(r,val)
             u.mem_write(u.reg_read(UC_ARM_REG_SP),struct.pack('<f',v[2]))
-            print('spawn positioned before skill portal',v,flush=True)
+            print('spawn positioned before test portal',v,flush=True)
         if u.reg_read(regs[1])==player_pointer:
             player_origin=v
             if v[1]>=1500:teleport_destination=True
@@ -124,6 +134,11 @@ if a.teleport_test:
         if name=='qcc_teleport_touch':teleport_events+=1
         teleport_functions.append(name);print('teleport trace:',name,'frame',frames,flush=True)
     hook('set_qcc_origin',origin)
+    if a.episode_test:
+        def episode_angles():
+            if frames==10 and u.reg_read(regs[1])==player_pointer:
+                u.reg_write(regs[3],struct.unpack('<I',struct.pack('<f',180.0))[0])
+        hook('set_qcc_angles',episode_angles)
     for name in ['qcc_teleport_touch','qcc_spawn_tfog','qcc_spawn_tdeath','R_TeleportSplash']:
         hook(name,lambda name=name:trace_teleport(name))
 if a.fault_test:
@@ -168,7 +183,7 @@ if a.fault_test and failure is None and frames==20:
         failure='Fault display did not produce 200 RGB565 scanlines'
     print('fault display scanlines:',len(diagnostic_rows),flush=True)
 matrix_passed=not a.input_matrix or (len(input_checks)==18 and all(x['passed'] for x in input_checks) and weapon_impulses==1)
-result=dict(texture_scratch_address=hex(symbols['textureCacheBuffer']),clipped_submodel_calls=clipped_submodel_calls,teleport_events=teleport_events,teleport_destination=teleport_destination,player_origin=player_origin,teleport_functions=teleport_functions,input_checks=input_checks,weapon_impulses=weapon_impulses,test='ARM engine with intercepted peripherals',elf_sha256=elf_sha256,asset_sha256=asset_sha256,frames=frames,elapsed_seconds=time.time()-start,failure=failure,maps=map_stats,passed=(not a.teleport_test or (teleport_events>0 and teleport_destination)) and matrix_passed and frames>=(20 if a.fault_test else a.frames) and failure is None and (not a.cycle or len([k for k in map_stats if k])==min(9,a.frames//a.cycle)))
+result=dict(changelevel_triggers=changelevel_triggers,texture_scratch_address=hex(symbols['textureCacheBuffer']),clipped_submodel_calls=clipped_submodel_calls,teleport_events=teleport_events,teleport_destination=teleport_destination,player_origin=player_origin,teleport_functions=teleport_functions,input_checks=input_checks,weapon_impulses=weapon_impulses,test='ARM engine with intercepted peripherals',elf_sha256=elf_sha256,asset_sha256=asset_sha256,frames=frames,elapsed_seconds=time.time()-start,failure=failure,maps=map_stats,passed=(not a.episode_test or (changelevel_triggers>0 and 'e1m1' in map_stats)) and (not a.teleport_test or (teleport_events>0 and teleport_destination)) and matrix_passed and frames>=(20 if a.fault_test else a.frames) and failure is None and (not a.cycle or len([k for k in map_stats if k])==min(9,a.frames//a.cycle)))
 print(json.dumps(result,indent=2))
 if a.json:a.json.write_text(json.dumps(result,indent=2)+'\n')
 raise SystemExit(0 if result['passed'] else 1)

@@ -21,6 +21,18 @@ class NativeGraphTests(unittest.TestCase):
     def test_bad_directory(self):
         for pointer in [0,0x20000000,ASSET+len(IMAGE)-4]:
             with self.assertRaises(ValueError):validate(self.changed(24,pointer))
+    def test_unaligned_native_pointers(self):
+        directory=struct.unpack_from('<I',IMAGE,24)[0]
+        with self.assertRaisesRegex(ValueError,'unaligned'):
+            validate(self.changed(24,directory+1))
+        e=next(e for e in validate(IMAGE)['entries'] if e['kind']==1)
+        model=struct.unpack_from('<I',IMAGE,e['address']-ASSET+8)[0]
+        md=struct.unpack_from('<I',IMAGE,model-ASSET+24)[0]
+        # Recompute CRC so these prove graph validation, not checksum rejection.
+        for field in [model-ASSET+24,md-ASSET+12,md-ASSET+12+6*4]:
+            pointer=struct.unpack_from('<I',IMAGE,field)[0]
+            with self.subTest(field=field),self.assertRaisesRegex(ValueError,'unaligned'):
+                validate(self.changed(field,pointer+1))
     def test_bad_model_entry(self):
         e=next(e for e in validate(IMAGE)['entries'] if e['kind']==1)
         for offset,value in [(e['address']-ASSET+4,256),(e['address']-ASSET+8,0x20000000)]:
