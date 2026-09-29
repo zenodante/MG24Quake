@@ -136,7 +136,12 @@ void D_DrawSkyScans8(espan_t *pspan)
 #if SKY_IN_RAM
 				*pdest++ = r_skysource[((t & R_SKY_TMASK) >> 8) + ((s & R_SKY_SMASK) >> 16)];
 #else
+#if QMAC_MG24
+                extern byte qmac_sky_sample(const byte*,int);
+                *pdest++ = qmac_sky_sample(ram_r_skysource,((t & R_SKY_TMASK) >> 9) | ((s & R_SKY_SMASK) >> 16));
+#else
                 *pdest++ = ram_r_skysource[((t & R_SKY_TMASK) >> 9) | ((s & R_SKY_SMASK) >> 16)];
+#endif
 #endif
                 s += sstep;
                 t += tstep;

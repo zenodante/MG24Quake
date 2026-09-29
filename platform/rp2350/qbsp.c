@@ -19,9 +19,9 @@ static bool range(uint32_t start, size_t size, uint32_t limit) {
 }
 static bool contents_ok(int32_t n) { return n>=-14 && n<=-1; }
 const uint8_t *qbsp_record(const qbsp_t *b, unsigned lump, uint32_t index) {
-    if (!b || !b->pak || lump>=QBSP_LUMPS || !stride[lump] ||
+    if (!b || !b->pak || lump>=QBSP_LUMPS || !b->lump[lump].stride ||
         !b->lump[lump].mapped || index>=b->lump[lump].count) return NULL;
-    return b->lump[lump].mapped+(size_t)index*stride[lump];
+    return b->lump[lump].mapped+(size_t)index*b->lump[lump].stride;
 }
 bool qbsp_read(const qbsp_t *b,unsigned lump,uint32_t offset,void *out,size_t size,qpak_cache_t *cache) {
     return b && b->pak && lump<QBSP_LUMPS && range(offset,size,b->lump[lump].size) &&
@@ -51,6 +51,7 @@ static bool validate(qbsp_t *b,qpak_cache_t *cache) {
     if (!b->lump[QBSP_MODELS].count || !b->lump[QBSP_LEAVES].count ||
         !b->lump[QBSP_PLANES].count) return false;
     uint8_t word[4];
+    if (!b->runtime) {
     if (!qbsp_read(b,QBSP_TEXTURES,0,word,4,cache)) return false;
     b->textures=u32(word);
     if (b->textures>(b->lump[QBSP_TEXTURES].size-4)/4) return false;
@@ -62,12 +63,15 @@ static bool validate(qbsp_t *b,qpak_cache_t *cache) {
             if (!qbsp_texture_mip(b,i,m,&off,&w,&h,cache)) return false;
         }
     }
+    }
     for (unsigned l=0;l<QBSP_LUMPS;++l) for (uint32_t i=0;i<b->lump[l].count && stride[l];++i) {
         p=qbsp_record(b,l,i);
+        uint8_t original[20];
+        if(l==QBSP_FACES && b->runtime){if(!qbsp_face_record(b,i,original))return false;p=original;}
         switch (l) {
         case QBSP_PLANES:
             for(unsigned k=0;k<4;++k) if(!isfinite(f32(p+4*k))) return false;
-            if(u32(p+16)>5) return false;
+            if((b->runtime?p[16]:u32(p+16))>5) return false;
             break;
         case QBSP_VERTICES:
             for(unsigned k=0;k<3;++k) if(!isfinite(f32(p+4*k))) return false;
@@ -76,13 +80,13 @@ static bool validate(qbsp_t *b,qpak_cache_t *cache) {
             if(u16(p)>=b->lump[QBSP_VERTICES].count || u16(p+2)>=b->lump[QBSP_VERTICES].count) return false;
             break;
         case QBSP_SURFEDGES: {
-            int64_t edge=i32(p); if(edge<0) edge=-edge;
+            int64_t edge=qbsp_surfedge(b,i); if(edge<0) edge=-edge;
             if((uint64_t)edge>=b->lump[QBSP_EDGES].count) return false;
             break;
         }
         case QBSP_TEXINFO:
             for(unsigned k=0;k<8;++k) if(!isfinite(f32(p+4*k))) return false;
-            if(u32(p+32)>=b->textures) return false;
+            if(u32(p+32)>=b->textures && !(b->runtime && !b->textures && u32(p+32)==UINT32_MAX)) return false;
             break;
         case QBSP_FACES:
             if(u16(p)>=b->lump[QBSP_PLANES].count || u16(p+2)>1 ||
@@ -118,12 +122,39 @@ bool qbsp_open(qbsp_t *out,const qpak_t *pak,const char *name,qpak_cache_t *cach
     if(!out) return false;
     memset(out,0,sizeof *out);
     qbsp_t b={.pak=pak}; uint8_t header[124];
-    if(!qpak_find(pak,name,&b.file) || !qpak_read(pak,&b.file,cache,0,header,sizeof header) || u32(header)!=29) return false;
+    if(!qpak_find(pak,name,&b.file) || !qpak_read(pak,&b.file,cache,0,header,sizeof header)) return false;
+    if(!memcmp(header,"QLV1",4)){
+        if(pak->xip_version!=3 || b.file.size<256 || u32(header+4)!=1 ||
+           u32(header+8)!=b.file.size || u32(header+12)!=15)return false;
+        const uint8_t *raw=qpak_map(pak,&b.file,0,b.file.size);
+        if(!raw)return false;
+        static const uint8_t rs[15]={1,20,24,12,1,28,44,32,1,8,32,2,4,4,64};
+        uint32_t end=256;
+        qpak_level_t view;
+        if(!qpak_level_open(pak,&b.file,&view) || !view.runtime)return false;
+        b.runtime=true;
+        for(unsigned l=0;l<15;++l){
+            const uint8_t *e=raw+16+l*16;qbsp_lump_t *v=&b.lump[l];
+            v->offset=u32(e);v->size=u32(e+4);v->count=u32(e+8);v->stride=u32(e+12);
+            if((v->stride!=rs[l] && !(l==13 && v->stride==2)) ||
+               (uint64_t)v->count*v->stride!=v->size || v->offset<end || (v->offset&3) ||
+               !range(v->offset,v->size,b.file.size))return false;
+            v->mapped=raw+v->offset;end=v->offset+v->size;
+        }
+        if(end!=b.file.size)return false;
+        b.textures=b.lump[2].count;
+        for(uint32_t i=0;i<b.textures;++i){uint32_t gid=u32(b.lump[2].mapped+i*24);
+            if(gid!=UINT32_MAX){uint32_t w,h;if(!qbsp_texture_pixels(&b,i,3,&w,&h))return false;}}
+        if(!validate(&b,cache))return false;
+        *out=b;return true;
+    }
+    if(u32(header)!=29)return false;
     for(unsigned l=0;l<QBSP_LUMPS;++l) {
         qbsp_lump_t *v=&b.lump[l];
         v->offset=u32(header+4+l*8); v->size=u32(header+8+l*8);
         if(!range(v->offset,v->size,b.file.size) || (v->size && v->offset<sizeof header) ||
            (stride[l] && v->size%stride[l])) return false;
+        v->stride=stride[l];
         v->count=stride[l]?v->size/stride[l]:0;
         v->mapped=qpak_map(pak,&b.file,v->offset,v->size);
         // Packing guarantees geometry/entities/PVS are directly accessible.
@@ -150,7 +181,7 @@ static bool locate(const qbsp_t *b,uint32_t model,unsigned hull,const float poin
         if(!node) return false;
         const uint8_t *plane=qbsp_record(b,QBSP_PLANES,u32(node));
         if(!plane) return false;
-        unsigned type=u32(plane+16);
+        unsigned type=b->runtime?plane[16]:u32(plane+16);
         float d=type<3?point[type]-f32(plane+12):
             point[0]*f32(plane)+point[1]*f32(plane+4)+point[2]*f32(plane+8)-f32(plane+12);
         n=i16(node+4+(d<0?2:0));
@@ -188,4 +219,27 @@ bool qbsp_leaf_pvs(const qbsp_t *b,uint32_t leaf,uint8_t *out,size_t capacity) {
         memset(out+done,0,run); done+=run;
     }
     return true;
+}
+
+const uint8_t *qbsp_texture_pixels(const qbsp_t *b,uint32_t texture,unsigned mip,
+                                  uint32_t *width,uint32_t *height){
+    if(!b || !b->runtime || !width || !height || mip>3 || texture>=b->textures)return NULL;
+    uint32_t gid=u32(b->lump[2].mapped+texture*24);size_t bytes;
+    const uint8_t *t=qpak_texture(b->pak,gid,&bytes);
+    if(!t || bytes<40)return NULL;
+    uint32_t w=u32(t+16),h=u32(t+20),off=u32(t+24+mip*4);
+    if(!w || !h || (w&15) || (h&15) || off<40 || off>bytes || (uint64_t)(w>>mip)*(h>>mip)>bytes-off)return NULL;
+    *width=w>>mip;*height=h>>mip;return t+off;
+}
+static void put16(uint8_t *p,unsigned x){p[0]=(uint8_t)x;p[1]=(uint8_t)(x>>8);}
+static void put32(uint8_t *p,uint32_t x){for(unsigned i=0;i<4;++i)p[i]=(uint8_t)(x>>(i*8));}
+bool qbsp_face_record(const qbsp_t *b,uint32_t index,uint8_t f[20]){
+    const uint8_t *p=qbsp_record(b,QBSP_FACES,index);if(!p || !f)return false;
+    if(!b->runtime){memcpy(f,p,20);return true;}
+    put16(f,u16(p+4));put16(f+2,u16(p+10)&1);put32(f+4,u32(p));
+    put16(f+8,u16(p+8));put16(f+10,u16(p+6));memcpy(f+12,p+20,4);put32(f+16,u32(p+24));return true;
+}
+int32_t qbsp_surfedge(const qbsp_t *b,uint32_t index){
+    const uint8_t *p=qbsp_record(b,QBSP_SURFEDGES,index);
+    return !p?INT32_MIN:b->lump[QBSP_SURFEDGES].stride==2?i16(p):i32(p);
 }

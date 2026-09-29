@@ -1829,6 +1829,10 @@ static inline void R_GenerateSpans(void)
 #else
             surf = &_g->surfaces[edge->surf0];
 #endif
+#if QMAC_MG24
+            if(surf->spanstate == 1 && (surf->NextIdx>=NUMSTACKSURFACES+1 || surf->PrevIdx>=NUMSTACKSURFACES+1))
+                Sys_Error("Bad surface links at row %d: edge=%ld surface=%u next=%u prev=%u state=%u count=%ld",_g->current_iv,edge-_g->base_edge_p,edge->surf0,surf->NextIdx,surf->PrevIdx,surf->spanstate,_g->surface_p-_g->surfaces);
+#endif
             R_TrailingEdge(surf, edge);
 #if EDGE_SURF_ARRAY
 			if (!edge->surfs[1])
@@ -1953,11 +1957,11 @@ void copyColorsToRam(void)
 void R_ScanEdges(void)
 {
     int iv, bottom;
-    byte basespans[MAXSPANS * sizeof(espan_t)];
+    espan_t basespans[MAXSPANS + 1];
     // next-hack: added this to prevent compiler complaining a pointer is outside bounds
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
-    _g->basespan_p = (espan_t*) basespans - 1;
+    _g->basespan_p = basespans;
 #pragma GCC diagnostic pop
 #if !ESPANS_HAVE_V
     byte baseSpansV[MAXSPANS + 1];
@@ -2086,16 +2090,17 @@ void R_ScanEdges(void)
             if (iv > MAX_Y_FOR_RESTORE_EDGES)
             {
 #if WIN32
-              printf("BLEAH\r\n"); // This message is clear, isn't it ?
+#if QMAC_MG24
+              Sys_Error("Span capacity exhausted after Z scratch reuse at row %d",iv);
+#else
+              printf("BLEAH\r\n");
+#endif
 #endif
                 return;
             }
             // clear the surface span pointers
-            for (s = &_g->surfaces[1]; s < _g->surface_p;)
-            { // if odd, then one more. If even, then ok, because surfaces[1] is actually the start of the array
-                setSurfSpans(s++, NULL);
-                setSurfSpans(s++, NULL);
-            }
+            for (s = &_g->surfaces[1]; s < _g->surface_p; ++s)
+                setSurfSpans(s, NULL);
             _g->span_p = _g->basespan_p + 1;
         }
 

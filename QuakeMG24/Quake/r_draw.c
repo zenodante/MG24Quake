@@ -359,7 +359,13 @@ static inline void R_EmitEdge(mvertex_t *pv0, mvertex_t *pv1)
         u = _g->r_u1 + ((float) v - _g->r_v1) * u_step;
     }
 
+    #if QMAC_MG24
+    /* Match ARM VCVT signed saturation, including sub-pixel steep edges. */
+    float fixed_step=u_step * 0x100000;
+    edge->u_step = fixed_step >= 2147483648.0f ? INT32_MAX : fixed_step <= -2147483648.0f ? INT32_MIN : (int32_t)fixed_step;
+#else
     edge->u_step = u_step * 0x100000;
+#endif
     edge->u = u * 0x100000 + 0xFFFFF;
 
 // we need to do this to avoid stepping off the edges if a very nearly

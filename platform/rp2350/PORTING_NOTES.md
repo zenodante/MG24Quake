@@ -1,5 +1,19 @@
 # RP2350 Quake port plan
 
+> Host-tool update: see [QXIP resource contract](../../docs/QXIP_RESOURCE_FORMAT.md).
+> The pipeline now defaults to QXIP3/QLV1 with offline immutable level conversion;
+> use `--level-format bsp29` for QXIP2. Existing runtime is not QXIP3-compatible.
+> Layout ABI v3: 768 KiB program reservation (including a 4 KiB update guard)
+> and 15.25 MiB resources. Assets start at `0x100C0000`; Flash ends at
+> `0x11000000`. Both firmware and assets must be updated when migrating from
+> the earlier 1 MiB boundary. There is no dedicated save partition.
+> The Mac full-game engine now passes nine-map Host_Frame regression tests.
+> RP2350 `quake_rp2350_bringup` remains a hardware/resource diagnostic; the
+> size-audit ELF is explicitly non-bootable. The new `quake_rp2350` target
+> links the full engine and uses fixed ARM QRN1 resources; see
+> [full firmware notes](game/README.md). Physical board validation is still pending.
+> See also [Mac notes](../macos/README.md).
+
 Reference: next-hack's original MG24 Quake port (2024-09-22).
 
 Central rule: **MG24 is the engine/renderer baseline, not the RP2350 hardware or storage baseline.** Keep the author's Quake algorithms and measured renderer optimizations; replace compromises that existed because MG24 had 276 kB RAM, internal-flash staging and external SPI storage.
@@ -112,7 +126,7 @@ Host tests cover QAD1 validation, incremental decoding, 11025->22050 sample-hold
 
 ## Host tools and current Flash status
 
-`Tools/RP2350Pack/mcu_pack_converter.py` performs portable host conversion including alias MDL and QAD1 sound conversion. `Tools/RP2350Pack/xip_image_builder.py` builds QXIP and physically deduplicates exact BSP miptex records into a global texture store. `Tools/RP2350Pack/run_pipeline.py` is the preferred one-command conversion entry point so MDL/QAD1 conversion is not accidentally bypassed. `Tools/RP2350Pack/make_uf2.py` validates QXIP1 and can produce a combined firmware+asset UF2. `Tools/RP2350Pack/make_asset_uf2.py` produces an **asset-only UF2** beginning at the 1 MiB asset partition, allowing firmware and immutable resources to be flashed independently during development.
+`Tools/RP2350Pack/mcu_pack_converter.py` performs portable host conversion including alias MDL and QAD1 sound conversion. `Tools/RP2350Pack/xip_image_builder.py` builds QXIP and physically deduplicates exact BSP miptex records into a global texture store. `Tools/RP2350Pack/run_pipeline.py` is the preferred one-command conversion entry point so MDL/QAD1 conversion is not accidentally bypassed. `Tools/RP2350Pack/make_uf2.py` validates QXIP1 and can produce a combined firmware+asset UF2. `Tools/RP2350Pack/make_asset_uf2.py` produces an **asset-only UF2** beginning at the 768 KiB asset boundary, allowing firmware and immutable resources to be flashed independently during development.
 
 Current measured shareware footprint after implemented conversions:
 
@@ -147,7 +161,7 @@ build_rp2350/quake_rp2350_bringup.uf2
 build_rp2350/quake_rp2350_bringup.bin
 ```
 
-The firmware UF2 writes only the reserved first 1 MiB firmware region. During engine development this is normally the image rebuilt and reflashed repeatedly.
+The firmware UF2 writes only the reserved first 768 KiB firmware region. During engine development this is normally the image rebuilt and reflashed repeatedly.
 
 ### 2. Regenerate converted QXIP assets
 
@@ -176,7 +190,7 @@ python3 Tools/RP2350Pack/make_asset_uf2.py \
   build_rp2350/quake-assets.uf2
 ```
 
-`quake-assets.uf2` contains **assets only**. Its first payload byte is written at the asset partition start, normally flash/XIP address `0x10100000`, corresponding to the **1 MiB offset** after firmware. The script validates QXIP1, the TEX1 store and the save-partition boundary. It does not write the firmware partition or persistent save partition.
+`quake-assets.uf2` contains **assets only**. Its first payload byte is written at the asset partition start, flash/XIP address `0x100C0000`, corresponding to the **768 KiB offset** after firmware. The script validates QXIP1, the TEX1 store and the save-partition boundary. It does not write the firmware partition or persistent save partition.
 
 After the current asset image has been flashed once, ordinary engine-code iterations require only rebuilding and flashing `quake_rp2350_bringup.uf2`. Reflash `quake-assets.uf2` whenever converted resources or the QXIP layout change.
 
@@ -230,7 +244,7 @@ Immediate next work:
 5. Split mixed structures such as surfaces/leaves where immutable topology currently shares a struct with per-frame visibility/dynamic-light state.
 6. Replace the RP2350 load path for converted levels with descriptor/map binding plus initialization of compact mutable sidecars. Keep the old MG24 loader probe as a reference/validation path while the new representation is brought up.
 7. Re-run `start.bsp`, then profile **all shareware maps** using the intended RP2350 representation to determine the true worst-case mutable SRAM requirement and any XIP-hot data worth caching.
-8. Re-measure QXIP size after each pre-expansion step against the 15 MiB asset partition and measure final linked firmware size against the 1 MiB firmware reservation.
+8. Re-measure QXIP size after each pre-expansion step against the 15.25 MiB asset partition and measure final linked firmware size against the 768 KiB firmware reservation.
 
 Phase 1 is not complete until `start` can be bound/loaded through the production QXIP representation and the real engine can consume it without MG24-style level-time flash staging.
 

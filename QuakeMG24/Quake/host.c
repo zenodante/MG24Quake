@@ -270,6 +270,9 @@ void Host_InitLocal(void)
  */
 void Host_WriteConfiguration(void)
 {
+#if QRP_FULL_GAME
+    Con_Printf("Persistent saves/settings need external storage in this Flash layout.\n");return;
+#endif
 #if WIN32
   FILE  *f;
   FIXME("WRITE CONF");
@@ -1014,7 +1017,9 @@ void Host_Init(quakeparms_t *parms)
 #else
         unsigned int colormapsize;
         host_colormap = (byte*) COM_LoadFileFromExtMem("gfx/colormap.lmp", &colormapsize);
+        #if !QMAC_GAME
         host_colormap = storeToInternalFlash(host_colormap, (colormapsize + 3) & ~3);
+        #endif
 #endif
         if (!host_colormap)
             Sys_Error("Couldn't load gfx/colormap.lmp");

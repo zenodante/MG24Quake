@@ -42,18 +42,18 @@ PLACEMENT = {
     'entities': ('xip_raw', 'immutable source text; parsed/consumed by game code'),
     'planes': ('xip_preexpand', 'immutable geometry'),
     'textures': ('xip_global_map', 'per-level local texture IDs map to global TEX1 IDs'),
-    'vertices': ('xip_preexpand', 'immutable geometry'),
+    'vertices': ('xip_raw', 'BSP float3 already usable; no duplicate runtime array'),
     'visibility': ('xip_raw', 'immutable PVS bitstream'),
     'nodes': ('xip_preexpand', 'immutable BSP topology; keep serialized child references or host-normalized IDs'),
     'texinfo': ('xip_preexpand', 'deterministic loader conversion: vectors, mipadjust, texture reference, flags'),
     'faces': ('split', 'immutable face/surface definition plus mutable renderer sidecar'),
     'lighting': ('xip_raw', 'immutable light samples'),
-    'clipnodes': ('xip_preexpand', 'immutable collision topology'),
+    'clipnodes': ('xip_raw', 'BSP plane ID and child indices already usable; hull0 shares render tree'),
     'leafs': ('split', 'immutable BSP/PVS topology plus any mutable frame state in SRAM sidecar'),
-    'marksurfaces': ('xip_preexpand', 'immutable surface references'),
-    'edges': ('xip_preexpand', 'immutable geometry'),
+    'marksurfaces': ('xip_raw', 'uint16 surface IDs already usable'),
+    'edges': ('xip_raw', 'uint16 vertex pairs already usable'),
     'surfedges': ('xip_preexpand', 'immutable geometry/index stream'),
-    'models': ('xip_preexpand', 'immutable submodel definitions'),
+    'models': ('xip_raw', 'retain float bounds and hull roots; runtime bounds/radius ABI remains undecided'),
 }
 
 
@@ -103,6 +103,11 @@ def analyze_level(name: str, data: bytes) -> dict:
         else:
             result['static_source_bytes'] += size
         result['lumps'].append(rec)
+    from level_image import compile_level
+    _, texture_records = miptex_records(lumps[2][2])
+    ids = [None if r is None else i for i, r in enumerate(texture_records)]
+    _, runtime = compile_level(data, ids, texture_records)
+    result['runtime_image'] = runtime
     return result
 
 

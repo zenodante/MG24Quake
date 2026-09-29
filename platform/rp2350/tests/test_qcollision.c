@@ -39,8 +39,8 @@ static bool recursive(const qbsp_t *b,int root,int n,float af,float bf,const flo
 }
 static void analytic(void){
     uint8_t planes[40]={0},nodes[16]={0},models[64]={0};qpak_t pak={0};
-    qbsp_t b={.pak=&pak};b.lump[QBSP_PLANES]=(qbsp_lump_t){.mapped=planes,.count=2};
-    b.lump[QBSP_CLIPNODES]=(qbsp_lump_t){.mapped=nodes,.count=2};b.lump[QBSP_MODELS]=(qbsp_lump_t){.mapped=models,.count=1};
+    qbsp_t b={.pak=&pak};b.lump[QBSP_PLANES]=(qbsp_lump_t){.mapped=planes,.count=2,.stride=20};
+    b.lump[QBSP_CLIPNODES]=(qbsp_lump_t){.mapped=nodes,.count=2,.stride=8};b.lump[QBSP_MODELS]=(qbsp_lump_t){.mapped=models,.count=1,.stride=64};
     putf(planes,1);put16(nodes+4,-1);put16(nodes+6,-2);
     float a[3]={10,0,0},z[3]={-10,10,0};qc_trace_t t;
     assert(qc_trace(&workspace,&b,0,1,a,z,&t));assert(closef(t.fraction,(10-0.03125f)/20));

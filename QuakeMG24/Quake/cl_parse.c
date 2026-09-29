@@ -827,10 +827,10 @@ void CL_ParseServerInfo(void)
     //
 #if WIN32
             printf("\r\n\r\n>>>>Flash remaining %d, zone remaining %d\r\n\r\n\r\n", getInternalFlashRemaningSize(), getZoneRemainingSize());
-            FIXME("Check how much we have free!");
+
 #endif // WIN32
 
-#if CACHE_SKINS_TO_FLASH && CACHEABLE_SKIN
+#if CACHE_SKINS_TO_FLASH && CACHEABLE_SKIN && !QMAC_GAME
     // cache to most common to less common. This shall be map dependent
     // FIXME: find a decent way to figure episode and map!
     const char *mapname = (char*) getStringFromIndex(_g->cl.worldmodel->nameIdx) + sizeof("maps/") - 1;  // sizeof includes null terminator
@@ -912,7 +912,7 @@ void CL_ParseServerInfo(void)
         vid.colormap = host_colormap;
     }
     //
-    if (getZoneRemainingSize() > MIN_ZONE_FREE_TO_CACHE_COLORMAP) // 16384 + about 50 edicts shall be free
+    if (!QMAC_GAME && getZoneRemainingSize() > MIN_ZONE_FREE_TO_CACHE_COLORMAP) // 16384 + about 50 edicts shall be free
     {
         vid.colormap = Z_CallocFailable(1, 16384, PU_LEVEL, NULL);
         if (vid.colormap)
@@ -927,7 +927,7 @@ void CL_ParseServerInfo(void)
     else
     {
 
-#if WIN32
+#if WIN32 && !QMAC_GAME
             FIXME("Not enough mem to cache colormap");
         #endif // WIN32
     }
@@ -1754,7 +1754,7 @@ void CL_ParseServerMessage(void)
                 i = MSG_ReadByte();
                 if (i >= _g->cl.maxclients)
                     Host_Error("CL_ParseServerMessage: svc_updatename > MAX_SCOREBOARD");
-                strcpy(_g->cl.scores[i].name, MSG_ReadString(strbuf, 2048));
+                snprintf(_g->cl.scores[i].name, sizeof(_g->cl.scores[i].name), "%s", MSG_ReadString(strbuf, 2048));
                 break;
 
             case svc_updatefrags:

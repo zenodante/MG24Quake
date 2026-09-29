@@ -1,3 +1,6 @@
+#ifndef QPAK_HOST_ALLOW_OVERSIZE
+#define QPAK_HOST_ALLOW_OVERSIZE 0
+#endif
 #include "qpak.h"
 #include <string.h>
 #include <limits.h>
@@ -52,13 +55,16 @@ bool qpak_lz4_decode(const uint8_t *src, size_t size, uint8_t *dst, size_t expec
 static bool qxip_open(qpak_t *pak,const uint8_t *p,size_t available) {
     /* <4s9I>: magic,version,files,str_off,dir_off,data_off,tex_off,tex_size,
        texture_count,image_bytes. Directory entries are <name_off,kind,off,size>. */
-    if (available < 40 || memcmp(p,"QXIP",4) || rd32(p+4)!=1) return false;
+    if (available < 40 || memcmp(p,"QXIP",4) || (rd32(p+4)<1 || rd32(p+4)>3)) return false;
     uint32_t files=rd32(p+8), strings=rd32(p+12), directory=rd32(p+16);
     uint32_t data=rd32(p+20), tex=rd32(p+24), tex_bytes=rd32(p+28);
-    uint32_t texture_count=rd32(p+32), bytes=rd32(p+36);
-    if (bytes<40 || bytes>available || bytes>QPAK_ASSET_CAPACITY || strings<40 ||
+    uint32_t version=rd32(p+4), header=version==1?40:48;
+    if(available<header)return false;
+    uint32_t texture_count=rd32(p+32), bytes=rd32(p+header-4);
+    uint32_t maps=version==1?0:rd32(p+36), mapbytes=version==1?0:rd32(p+40);
+    if (bytes<header || bytes>available || (!QPAK_HOST_ALLOW_OVERSIZE && bytes>QPAK_ASSET_CAPACITY) || strings<header || directory>bytes ||
         directory<strings || files>(bytes-directory)/16 || !range(directory,(size_t)files*16,bytes) ||
-        data<directory+(uint64_t)files*16 || data>bytes || !range(tex,tex_bytes,bytes)) return false;
+        data<directory+(uint64_t)files*16 || data>bytes || tex<data || !range(tex,tex_bytes,bytes)) return false;
     if (tex_bytes<12 || memcmp(p+tex,"TEX1",4) || rd32(p+tex+4)!=texture_count ||
         rd32(p+tex+8)!=12 || texture_count>(tex_bytes-12)/40) return false;
     for(uint32_t i=0;i<texture_count;++i){
@@ -69,13 +75,30 @@ static bool qxip_open(qpak_t *pak,const uint8_t *p,size_t available) {
     for(uint32_t i=0;i<files;++i){
         const uint8_t *e=p+directory+i*16;
         uint32_t noff=rd32(e),kind=rd32(e+4),off=rd32(e+8),size=rd32(e+12);
-        if(noff>=directory-strings || kind>1 || !range(off,size,bytes))return false;
+        if(noff>=directory-strings || kind>1 || off<data || !range(off,size,tex))return false;
         const uint8_t *name=p+strings+noff;
         if(!memchr(name,0,directory-(strings+noff)))return false;
     }
+    if(version>1){
+        if(maps<tex+tex_bytes || !range(maps,mapbytes,bytes) || maps+mapbytes!=bytes ||
+           mapbytes<8 || memcmp(p+maps,"LMAP",4))return false;
+        uint32_t levels=rd32(p+maps+4),last=0;
+        if(levels>(mapbytes-8)/16)return false;
+        for(uint32_t i=0;i<levels;++i){
+            const uint8_t *e=p+maps+8+i*16;
+            uint32_t fi=rd32(e),count=rd32(e+4),off=rd32(e+8);
+            if(fi>=files || (i&&fi<=last) || rd32(e+12) || rd32(p+directory+fi*16+4)!=1 ||
+               off<8+levels*16 || count>mapbytes/4 || !range(off,(size_t)count*4,mapbytes))return false;
+            last=fi;
+            for(uint32_t j=0;j<count;++j){uint32_t id=rd32(p+maps+off+j*4);
+                if(id!=UINT32_MAX && id>=texture_count)return false;}
+        }
+        uint32_t actual=0;for(uint32_t i=0;i<files;++i)actual+=rd32(p+directory+i*16+4)==1;
+        if(actual!=levels)return false;
+    }else if(tex+tex_bytes!=bytes)return false;
     *pak=(qpak_t){.image=p,.bytes=bytes,.files=files,.directory=directory,.payload=data,
         .strings=strings,.texture_store=tex,.texture_store_bytes=tex_bytes,
-        .texture_count=texture_count,.format=QPAK_FORMAT_QXIP1};
+        .texture_count=texture_count,.xip_version=version,.level_maps=maps,.level_maps_bytes=mapbytes,.format=QPAK_FORMAT_QXIP1};
     return true;
 }
 bool qpak_open(qpak_t *pak, const void *image, size_t available) {
@@ -86,7 +109,7 @@ bool qpak_open(qpak_t *pak, const void *image, size_t available) {
     if (available < 64 || memcmp(p,"QRP2350\0",8) || rd32(p+8)!=1 || rd32(p+12)!=QPAK_BLOCK_BYTES) return false;
     qpak_t q = {.image=p, .bytes=rd32(p+16), .files=rd32(p+20), .blocks=rd32(p+24),
                 .directory=rd32(p+28), .block_table=rd32(p+32), .payload=rd32(p+36),.format=QPAK_FORMAT_BLOCKS};
-    if (q.bytes < 64 || q.bytes > available || q.bytes > QPAK_ASSET_CAPACITY || q.directory!=64 ||
+    if (q.bytes < 64 || q.bytes > available || (!QPAK_HOST_ALLOW_OVERSIZE && q.bytes > QPAK_ASSET_CAPACITY) || q.directory!=64 ||
         q.files > (q.bytes-64)/80 || q.block_table!=64+q.files*80 ||
         !range(q.block_table,0,q.bytes) || q.blocks>(q.bytes-q.block_table)/16 ||
         q.payload!=q.block_table+q.blocks*16 || !range(q.payload,0,q.bytes)) return false;
@@ -122,7 +145,7 @@ bool qpak_find(const qpak_t *pak, const char *name, qpak_file_t *file) {
             uint32_t noff=rd32(e);
             if(!strcmp((const char *)(pak->image+pak->strings+noff),name)){
                 uint32_t kind=rd32(e+4),off=rd32(e+8),size=rd32(e+12);
-                *file=(qpak_file_t){.size=size,.direct_offset=off,.kind=kind,.direct=true};
+                *file=(qpak_file_t){.size=size,.direct_offset=off,.kind=kind,.directory_index=i,.direct=true};
                 return true;
             }
         }
@@ -193,7 +216,32 @@ bool qpak_read(const qpak_t *pak,const qpak_file_t *f,qpak_cache_t *cache,
 bool qpak_level_open(const qpak_t *pak,const qpak_file_t *file,qpak_level_t *level) {
     if(!pak||!file||!level||pak->format!=QPAK_FORMAT_QXIP1||file->kind!=1||!file->direct||file->size<68)
         return false;
-    const uint8_t *p=pak->image+file->direct_offset;
+    const uint8_t *p=qpak_map(pak,file,0,file->size);
+    if(!p)return false;
+    if(pak->xip_version>=2){
+        qpak_level_t view={.base=p,.bytes=file->size,.runtime=pak->xip_version==3};
+        const uint8_t *maps=pak->image+pak->level_maps;
+        for(uint32_t i=0;i<rd32(maps+4);++i){const uint8_t *e=maps+8+i*16;
+            if(rd32(e)==file->directory_index){view.texture_count=rd32(e+4);view.texture_ids=maps+rd32(e+8);break;}}
+        if(!view.texture_ids)return false;
+        if(view.runtime){
+            if(file->size<256 || memcmp(p,"QLV1",4) || rd32(p+4)!=1 || rd32(p+8)!=file->size || rd32(p+12)!=15)return false;
+            uint32_t end=256;
+            for(unsigned i=0;i<15;++i){const uint8_t *e=p+16+i*16;uint32_t off=rd32(e),size=rd32(e+4);
+                if(off<end || (off&3) || !range(off,size,file->size) || (uint64_t)rd32(e+8)*rd32(e+12)!=size)return false;
+                view.lump_offset[i]=off;view.lump_size[i]=size;end=off+size;}
+            if(end!=file->size || view.lump_size[2]!=(uint64_t)view.texture_count*24)return false;
+            for(uint32_t i=0;i<view.texture_count;++i)
+                if(rd32(p+view.lump_offset[2]+i*24)!=rd32(view.texture_ids+i*4))return false;
+        }else{
+            if(file->size<124 || rd32(p)!=29)return false;
+            for(unsigned i=0;i<15;++i){uint32_t off=rd32(p+4+i*8),size=rd32(p+8+i*8);
+                if((size && off<124) || !range(off,size,file->size))return false;
+                view.lump_offset[i]=off;view.lump_size[i]=size;}
+            if(view.lump_size[2]!=(uint64_t)view.texture_count*4+4 || rd32(p+view.lump_offset[2])!=view.texture_count)return false;
+        }
+        *level=view;return true;
+    }
     if(memcmp(p,"LVL1",4))return false;
     uint32_t texture_count=rd32(p+4);
     uint32_t off[QXIP_BSP_LUMPS];
@@ -217,7 +265,7 @@ const uint8_t *qpak_level_lump(const qpak_level_t *level,unsigned lump,size_t *b
 }
 bool qpak_level_texture_id(const qpak_level_t *level,unsigned index,uint32_t *texture_id) {
     if(!level||!texture_id||index>=level->texture_count)return false;
-    const uint8_t *ids=level->base+level->lump_offset[2]+4;
+    const uint8_t *ids=level->texture_ids?level->texture_ids:level->base+level->lump_offset[2]+4;
     *texture_id=rd32(ids+index*4);
     return true;
 }

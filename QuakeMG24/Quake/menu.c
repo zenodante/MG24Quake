@@ -506,6 +506,9 @@ int loadable; // must contain MAX_SAVEGAMES
 
 void M_ScanSaves(void)
 {
+#if QRP_FULL_GAME
+    loadable=0;for(int i=0;i<MAX_SAVEGAMES;i++)strcpy(m_filenames[i],"-EMPTY-");return;
+#endif
 #if !USE_EXT_MEMORY
   int   i, j;
   char  name[MAX_OSPATH];

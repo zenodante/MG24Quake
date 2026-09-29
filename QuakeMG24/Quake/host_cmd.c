@@ -455,6 +455,9 @@ void Host_SavegameComment(char *text)
  */
 void Host_Savegame_f(void)
 {
+#if QRP_FULL_GAME
+    Con_Printf("Persistent saves/settings need external storage in this Flash layout.\n");return;
+#endif
     printf("Size of is nvm: %d sett: %d %d sg: %d %d\r\n", sizeof(nvmData_t), sizeof(padded_settings_t), sizeof(settings_t), sizeof (padded_savegame_t), sizeof (savegame_t));
     FIXME("SIZE OF savegame\r\n");
     int i;
@@ -580,6 +583,9 @@ void Host_Savegame_f(void)
  */
 void Host_Loadgame_f(void)
 {
+#if QRP_FULL_GAME
+    Con_Printf("Persistent saves/settings need external storage in this Flash layout.\n");return;
+#endif
     char mapname[MAX_QPATH];
     float time;
     float spawn_parms[NUM_SPAWN_PARMS];

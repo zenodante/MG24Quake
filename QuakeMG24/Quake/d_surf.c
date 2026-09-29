@@ -520,7 +520,7 @@ static DRAWSURF_SEC void findAndStartNextPreloadTexture(int currentSurfIndex, in
                 oldTcb->state = TEXTURE_BUFFER_STATE_LOADING;
                 oldTcb->bytesRead = 0;
                 byte *dest = setTcbLoadParameters(oldTcb, TCB_LOAD_ASYNC);
-                extMemStartAsynchDataRead((uint32_t) oldTcb->extMemAddress, dest, oldTcb->bytesBeingRead);
+                extMemStartAsynchDataRead((uintptr_t) oldTcb->extMemAddress, dest, oldTcb->bytesBeingRead);
                 tcbPrintf("Found: Start loading texture %p. Being read %d\r\n", oldTcb->extMemAddress, oldTcb->bytesBeingRead);
 #if WIN32
                     static int maxSum = 0;
@@ -592,7 +592,7 @@ static void loadAndBuildLighting(int currentSurfIndex)
     if (loadRequired)
 #endif
         {
-            extMemStartAsynchDataRead((uint32_t) lightmap, tmpLightMap, (3 + size * lmnum) & ~3);
+            extMemStartAsynchDataRead((uintptr_t) lightmap, tmpLightMap, (3 + size * lmnum) & ~3);
         }
     }
     // clear to ambient
@@ -740,7 +740,7 @@ DRAWSURF_SEC void lightedSurfacePreTextureLoaderHandler(byte *lastTexture, byte 
                         tcbPrintf("(LIGHT) will continue loading current texture in otherTCB (which will become old)\r\n");
                         // if there are still bytes to be loaded, load next part
                         byte *dest = setTcbLoadParameters(otherTcb, TCB_LOAD_ASYNC);
-                        extMemStartAsynchDataRead((uint32_t) otherTcb->extMemAddress + otherTcb->bytesRead, dest, otherTcb->bytesBeingRead);
+                        extMemStartAsynchDataRead((uintptr_t) otherTcb->extMemAddress + otherTcb->bytesRead, dest, otherTcb->bytesBeingRead);
                         // for sure it's still loading
                     }
                 }
@@ -769,7 +769,7 @@ DRAWSURF_SEC void lightedSurfacePreTextureLoaderHandler(byte *lastTexture, byte 
                     otherTcb->extMemAddress = newTexture;
                     // load
                     byte *dest = setTcbLoadParameters(otherTcb, TCB_LOAD_ASYNC);
-                    extMemStartAsynchDataRead((uint32_t) otherTcb->extMemAddress + otherTcb->bytesRead, dest, otherTcb->bytesBeingRead);
+                    extMemStartAsynchDataRead((uintptr_t) otherTcb->extMemAddress + otherTcb->bytesRead, dest, otherTcb->bytesBeingRead);
                     otherTcb->state = TEXTURE_BUFFER_STATE_LOADING;
                 }
 #endif
@@ -805,7 +805,7 @@ DRAWSURF_SEC void lightedSurfacePreTextureLoaderHandler(byte *lastTexture, byte 
 
                 // if there are still bytes to be loaded, load next part
                 byte *dest = setTcbLoadParameters(otherTcb, TCB_LOAD_ASYNC);
-                extMemStartAsynchDataRead((uint32_t) otherTcb->extMemAddress, dest, otherTcb->bytesBeingRead);
+                extMemStartAsynchDataRead((uintptr_t) otherTcb->extMemAddress, dest, otherTcb->bytesBeingRead);
                 otherTcb->state = TEXTURE_BUFFER_STATE_LOADING;
             }
                 tcbPrintf("(PRELIGHT) CHANGING TCB INDEX\r\n");
@@ -832,7 +832,7 @@ DRAWSURF_SEC void lightedSurfacePreTextureLoaderHandler(byte *lastTexture, byte 
                 //oldTcb->extMemAddress  = lastTexture;
                 tcbPrintf("(LIGHT) will continue loading current texture\r\n");
                 byte *dest = setTcbLoadParameters(otherTcb, TCB_LOAD_ASYNC);
-                extMemStartAsynchDataRead((uint32_t) otherTcb->extMemAddress + otherTcb->bytesRead, dest, otherTcb->bytesBeingRead);
+                extMemStartAsynchDataRead((uintptr_t) otherTcb->extMemAddress + otherTcb->bytesRead, dest, otherTcb->bytesBeingRead);
             }
         }
     }
@@ -959,7 +959,7 @@ DRAWSURF_SEC void textureLoaderHandler(byte *lastTexture, byte *newTexture, int 
                     {
                         // if there are stil bytes to be loaded, load next part
                         byte *dest = setTcbLoadParameters(otherTcb, TCB_LOAD_ASYNC);
-                        extMemStartAsynchDataRead((uint32_t) otherTcb->extMemAddress + otherTcb->bytesRead, dest, otherTcb->bytesBeingRead);
+                        extMemStartAsynchDataRead((uintptr_t) otherTcb->extMemAddress + otherTcb->bytesRead, dest, otherTcb->bytesBeingRead);
                     }
                 }
                 // else: don't do anything. Maybe next time...
@@ -1007,7 +1007,7 @@ DRAWSURF_SEC void textureLoaderHandler(byte *lastTexture, byte *newTexture, int 
             int tmax = (surf->extents[1]>>4)+1;
             int size = smax*tmax;
             //
-            extMemStartAsynchDataRead((uint32_t) lightmap, tmpLightMap, size * lmnum);
+            extMemStartAsynchDataRead((uintptr_t) lightmap, tmpLightMap, size * lmnum);
             nextLightMapSurfPosIndex = nextSurfPosIdx;
         }
 #endif

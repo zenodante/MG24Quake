@@ -103,7 +103,9 @@ extern const byte  intsintable[SIN_BUFFER_SIZE];
 #define NUMSTACKSURFACES  600 //800
 #define MINSURFACES     NUMSTACKSURFACES
 #define LESS_SPANS 1
-#if LESS_SPANS
+#if QMAC_MG24
+#define MAXSPANS 8191 /* 13-bit indices; native 64-bit edges occupy more Z scratch. */
+#elif LESS_SPANS
 #if SURF_HAS_FIXED_D_ZISTEP_DATA
 #define MAXSPANS      3000 //3000
 #elif EDGE_POINTERS

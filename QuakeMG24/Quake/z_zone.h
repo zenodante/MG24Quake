@@ -115,11 +115,11 @@
 // ZONE MEMORY
 typedef struct memblock
 {
-#if MAX_STATIC_ZONE < 131072 - 4
+#if !QMAC_GAME && MAX_STATIC_ZONE < 131072 - 4
     unsigned int next_sptr:15;
     unsigned int prev_sptr:15;
     unsigned int tag :2;
-#elif MAX_STATIC_ZONE < 262144
+#elif !QMAC_GAME && MAX_STATIC_ZONE < 262144
     unsigned int next_sptr:16;
     unsigned int prev_sptr:16;
     union

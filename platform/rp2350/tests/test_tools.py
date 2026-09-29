@@ -27,7 +27,7 @@ class FirmwareUpdateTests(unittest.TestCase):
 
     def test_layout_abi(self):
         self.assertEqual((uf2.BASE, uf2.GUARD, uf2.ASSET, uf2.SAVE),
-                         (0x10000000, 0x100FF000, 0x10100000, 0x10FC0000))
+                         (0x10000000, 0x100BF000, 0x100C0000, 0x11000000))
 
     def test_firmware_growth_never_erases_resources_or_saves(self):
         # Simulate sector erase + programming of every record, even the E10
@@ -44,7 +44,7 @@ class FirmwareUpdateTests(unittest.TestCase):
                 sector = offset & ~4095
                 flash[sector:sector+4096] = b"\xff" * 4096
                 flash[offset:offset+length] = output[pos+32:pos+32+length]
-            self.assertEqual(flash[0x100000:], b"\xa5" * 0xf00000)
+            self.assertEqual(flash[uf2.ASSET-uf2.BASE:], b"\xa5" * (0x1000000-(uf2.ASSET-uf2.BASE)))
 
     def test_without_guard(self):
         raw = self.firmware(guard=False)

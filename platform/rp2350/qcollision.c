@@ -12,7 +12,7 @@ static int i16(const uint8_t *p){return (int16_t)(p[0]|(unsigned)p[1]<<8);}
 static float f32(const uint8_t *p){uint32_t v=u32(p);float f;memcpy(&f,&v,4);return f;}
 static float dot(const float *a,const float *b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
 static bool vector_ok(const float *v){if(!v)return false;for(unsigned k=0;k<3;++k)if(!isfinite(v[k])||fabsf(v[k])>10000000)return false;return true;}
-static float distance(const uint8_t *p,const float *v){unsigned type=u32(p+16);return type<3?v[type]-f32(p+12):v[0]*f32(p)+v[1]*f32(p+4)+v[2]*f32(p+8)-f32(p+12);}
+static float distance(const uint8_t *p,const float *v){unsigned type=p[16];return type<3?v[type]-f32(p+12):v[0]*f32(p)+v[1]*f32(p+4)+v[2]*f32(p+8)-f32(p+12);}
 static bool terminal(const qbsp_t *b,unsigned hull,int32_t node,int32_t *value){
     if(!hull){const uint8_t *l=qbsp_record(b,QBSP_LEAVES,(uint32_t)(-(int64_t)node-1));if(!l)return false;node=i32(l);}
     if(node < -14 || node > -1)return false;

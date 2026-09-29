@@ -1,7 +1,12 @@
 #ifndef QRP_QRENDER_H
 #define QRP_QRENDER_H
 #include "qbsp.h"
-enum { QR_WIDTH=320, QR_HEIGHT=152, QR_MAX_FACES=65536, QR_MAX_LEAVES=8192,
+#ifdef QR_XIP_ONLY
+#define QR_FACE_LIMIT 8192
+#else
+#define QR_FACE_LIMIT 65536
+#endif
+enum { QR_WIDTH=320, QR_HEIGHT=152, QR_MAX_FACES=QR_FACE_LIMIT, QR_MAX_LEAVES=8192,
        QR_TEXTURE_BYTES=32768, QR_POLY_VERTS=72 };
 typedef struct { float position[3], yaw; } qr_camera_t;
 typedef struct { float x,y,z,s,t; } qr_vertex_t;
@@ -10,11 +15,16 @@ typedef struct { unsigned faces,triangles,pixels,rejected; } qr_stats_t;
  * the 3D viewport. Full frame ownership stays with qservice. No Flash writes. */
 typedef struct {
     uint16_t depth[QR_WIDTH*QR_HEIGHT];
+    #ifndef QR_XIP_ONLY
     uint8_t texture[QR_TEXTURE_BYTES], colormap[64*256];
+#endif
+    const uint8_t *texture_pixels, *color_rows;
     uint8_t visible[QR_MAX_FACES/8], pvs[QR_MAX_LEAVES/8];
     uint8_t light[4*18*18];
     qr_vertex_t poly[2][QR_POLY_VERTS];
+#ifndef QR_XIP_ONLY
     qpak_cache_t cache;
+#endif
     const qbsp_t *world;
     int texture_id;
     unsigned mip,tw,th;

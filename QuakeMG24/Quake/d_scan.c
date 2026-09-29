@@ -1195,7 +1195,7 @@ __attribute__((always_inline))  static inline uint8_t R_GetSurfacePixel##mipleve
 }
 #elif  NEW_BILINEAR_INTERPOLATION
 #if TEST_SIMD
-#define PACK16(s,t) ( ((s)  & 0xFFFF) |  (( (t)  & 0xFFFF) << 16))
+#define PACK16(s,t) ( ((uint32_t)(s) & 0xFFFFu) | (((uint32_t)(t) & 0xFFFFu) << 16))
 #define getS(st) ((int32_t) ((int16_t) ((st) & 0xFFFF)))
 #define getT(st) ((int32_t) ((int16_t) ((st) >> 16)))
 #if WIN32
@@ -1571,7 +1571,7 @@ DRAWSURF_SEC void D_DrawSpans8(espan_t *pspan)
     if (fabs(zi8stepu) > maxzi8stepu)
     {
         maxzi8stepu = fabs(zi8stepu);
-        printf(">>>>>>>>>>>>>>>>>>maxzi8stepu increased to %f, value %f\r\n", maxzi8stepu, zi8stepu);
+        /* Diagnostic maximum retained without per-frame console traffic. */
     }
     #endif
     do
@@ -1822,8 +1822,8 @@ DRAWSURF_SEC void D_DrawSpans8(espan_t *pspan)
     do
     {
 #if TEST_SIMD
-        s = (int32_t) (getS(st)) << (16 - SPAN_PRECISION);
-        t = (int32_t) (getT(st)) << (16 - SPAN_PRECISION);
+        s = (int32_t) (getS(st)) * (1 << (16 - SPAN_PRECISION));
+        t = (int32_t) (getT(st)) * (1 << (16 - SPAN_PRECISION));
  //   printf("New s 0x%08x t 0x%08x\r\n", s, t);
 
 #endif
@@ -1908,7 +1908,7 @@ DRAWSURF_SEC void D_DrawSpans8(espan_t *pspan)
  D_DrawZSpans
  =============
  */
-__attribute__ ((section(".drawsurf"))) void D_DrawZSpans(espan_t *pspan)
+DRAWSURF_SEC void D_DrawZSpans(espan_t *pspan)
 {
     int count, izistep;
     int izi;
@@ -2004,7 +2004,7 @@ __attribute__ ((section(".drawsurf"))) void D_DrawZSpans(espan_t *pspan)
         izi += izistep;
                 quadpixel |= (uint64_t)(izi & 0xFFFF0000) << 32;
         izi += izistep;
-        *(uint64_t *)pdest = quadpixel;
+        memcpy(pdest, &quadpixel, sizeof quadpixel);
         pdest += 4;
       } while (--quadcount > 0);
     }

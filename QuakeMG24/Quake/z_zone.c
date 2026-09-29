@@ -112,9 +112,13 @@
 #define ZONE_EXIT_CRITICAL()
 //#include "z_zone.h" included by quakedef.h
 // Minimum chunk size at which blocks are allocated.
+#if QMAC_GAME
+#define CHUNK_SIZE 8
+#else
 #define CHUNK_SIZE 4
+#endif
 #define MEM_ALIGN CHUNK_SIZE
-#if WIN32
+#if WIN32 && !QMAC_GAME
 #define ZMALLOC_STAT 1
 #else
 #define ZMALLOC_STAT 0
@@ -146,7 +150,10 @@ typedef struct
 __attribute__ ((aligned (CHUNK_SIZE)))  uint8_t staticZone[MAX_STATIC_ZONE];
 
 memzone_t *mainzone;
-#if MAX_STATIC_ZONE < 262144 && MAX_STATIC_ZONE >= 65536
+#if QMAC_GAME
+size_t qmac_zone_peak;
+#endif
+#if !QMAC_GAME && MAX_STATIC_ZONE < 262144 && MAX_STATIC_ZONE >= 65536
   extern inline unsigned short getShortPtr(void *longPtr);
 #endif
 int getZoneRemainingSize(void)
@@ -162,13 +169,13 @@ void* I_ZoneBase(int *size)
     *size = sizeof(staticZone);
     return staticZone;
 }
-#if MAX_STATIC_ZONE < 262144
+#if !QMAC_GAME && MAX_STATIC_ZONE < 262144
 // returns short pointer relative to static zone
 static inline uint16_t zoneGetShortPtr(void *ptr)
 {
     if (NULL == ptr)
         return 0;
-#if MAX_STATIC_ZONE < 131072 - 4
+#if !QMAC_GAME && MAX_STATIC_ZONE < 131072 - 4
     else if (ptr == &mainzone->blocklist)
          return 0x7FFF;
 #else
@@ -186,7 +193,7 @@ static void* zoneGetLongPtr(uint16_t shortPtr)
 {
     if (0 == shortPtr)
         return NULL;
-#if MAX_STATIC_ZONE < 131072 - 4
+#if !QMAC_GAME && MAX_STATIC_ZONE < 131072 - 4
     else if (0x7FFF == shortPtr)
         return &mainzone->blocklist;
 #else
@@ -199,7 +206,7 @@ static void* zoneGetLongPtr(uint16_t shortPtr)
 #endif
 static void setMemblockNext( memblock_t *block,  memblock_t *next)
 {
-#if MAX_STATIC_ZONE < 262144
+#if !QMAC_GAME && MAX_STATIC_ZONE < 262144
     block->next_sptr = zoneGetShortPtr(next);
 #else
     block->next = next;
@@ -207,7 +214,7 @@ static void setMemblockNext( memblock_t *block,  memblock_t *next)
 }
 static void setMemblockPrev( memblock_t *block,  memblock_t *prev)
 {
-#if MAX_STATIC_ZONE < 262144
+#if !QMAC_GAME && MAX_STATIC_ZONE < 262144
     block->prev_sptr = zoneGetShortPtr(prev);
 #else
     block->prev = prev;
@@ -215,7 +222,7 @@ static void setMemblockPrev( memblock_t *block,  memblock_t *prev)
 }
 static inline memblock_t* getMemblockPrev(memblock_t *mb)
 {
-    #if MAX_STATIC_ZONE < 262144
+    #if !QMAC_GAME && MAX_STATIC_ZONE < 262144
         return (memblock_t*) zoneGetLongPtr(mb->prev_sptr);
     #else
         return mb->prev;
@@ -223,11 +230,11 @@ static inline memblock_t* getMemblockPrev(memblock_t *mb)
 }
 static inline void** getMemblockUser(memblock_t *mb)
 {
-    #if MAX_STATIC_ZONE < 262144 && MAX_STATIC_ZONE >= 131072 - 4
+    #if !QMAC_GAME && MAX_STATIC_ZONE < 262144 && MAX_STATIC_ZONE >= 131072 - 4
     #if !WIN32
         return (void**) getLongPtr(mb->user_spptr);
     #endif
-    #elif MAX_STATIC_ZONE >= 262144
+    #elif QMAC_GAME || MAX_STATIC_ZONE >= 262144
         return mb->user;
     #else
         (void) mb;
@@ -236,7 +243,7 @@ static inline void** getMemblockUser(memblock_t *mb)
 }
 static inline memblock_t* getMemblockNext(memblock_t *mb)
 {
-#if MAX_STATIC_ZONE < 262144
+#if !QMAC_GAME && MAX_STATIC_ZONE < 262144
     return (memblock_t*) zoneGetLongPtr(mb->next_sptr);
 #else
     return mb->next;
@@ -244,7 +251,7 @@ static inline memblock_t* getMemblockNext(memblock_t *mb)
 }
 static inline uint32_t getMemblockSize(memblock_t *mb)
 {
-#if MAX_STATIC_ZONE < 262144
+#if !QMAC_GAME && MAX_STATIC_ZONE < 262144
     uint8_t *next = (uint8_t*) getMemblockNext(mb);
     if ((uint32_t) next < (uint32_t) mb)
     {
@@ -282,11 +289,11 @@ void zmallocTest()
 
 static void setMemblockUser(memblock_t *block, void *user)
 {
-#if MAX_STATIC_ZONE < 262144 && MAX_STATIC_ZONE >= 65536
+#if !QMAC_GAME && MAX_STATIC_ZONE < 262144 && MAX_STATIC_ZONE >= 65536
   #if !WIN32
     block->user_spptr = getShortPtr(user);
    #endif
-#elif MAX_STATIC_ZONE >= 262144
+#elif QMAC_GAME || MAX_STATIC_ZONE >= 262144
     block->user = user;
 #else
     (void) block;
@@ -388,7 +395,7 @@ void* Z_Malloc2(uint32_t size, int tag, void **user, const char *sz, int canFail
             // scanned all the way around the list. Fail if cannot fail.
             printf("Z_Malloc: failed on allocation of %i bytes", (int) size);
             if (!canFail)
-            while (1);
+                Sys_Error("Zone exhausted requesting %u bytes",size);
             return NULL;
         }
         if (rover->tag != PU_FREE)
@@ -432,6 +439,9 @@ void* Z_Malloc2(uint32_t size, int tag, void **user, const char *sz, int canFail
         setMemblockNext(base, newblock);
     }
     mainzone->free_memory -= getMemblockSize(base);
+#if QMAC_GAME
+    size_t used=MAX_STATIC_ZONE-mainzone->free_memory;if(used>qmac_zone_peak)qmac_zone_peak=used;
+#endif
     //
     if (user == NULL && tag >= PU_PURGELEVEL)
     {
@@ -458,6 +468,10 @@ void* Z_Malloc2(uint32_t size, int tag, void **user, const char *sz, int canFail
 #if ZMALLOC_STAT
     printf("Mall: num %d, occ. %d lrgst %d Addr %04x. BlkSz %d %s\r\n", mainzone->numblocks, mainzone->free_memory, mainzone->largest_occupied, base, getMemblockSize(base), sz);
 #endif
+#if QMAC_MEMORY_AUDIT
+    extern void qmac_profile_alloc(void*,size_t,bool,const char*);
+    qmac_profile_alloc(result,getMemblockSize(base),false,NULL);
+#endif
     return result;
 }
 
@@ -480,6 +494,9 @@ void (Z_Free)(void *p)
         *(getMemblockUser(block)) = NULL;
     }
     // free memory
+#if QMAC_MEMORY_AUDIT
+    extern void qmac_profile_free(void*);qmac_profile_free(p);
+#endif
     size_t freedBlockSize = getMemblockSize(block);
     mainzone->free_memory += freedBlockSize;
 

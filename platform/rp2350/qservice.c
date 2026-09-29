@@ -317,6 +317,11 @@ bool qservice_sound_start(unsigned channel,const qsound_t *sound,unsigned left,u
     return true;
 }
 
+bool qservice_sound_gain(unsigned channel,unsigned left,unsigned right) {
+    if(channel>=QMIX_CHANNELS)return false;
+    audio_lock_mixer();mixer.channels[channel].left=left>255?255:left;mixer.channels[channel].right=right>255?255:right;audio_unlock_mixer();return true;
+}
+
 bool qservice_sound_stop(unsigned channel) {
     if(channel>=QMIX_CHANNELS)return false;
     audio_lock_mixer();

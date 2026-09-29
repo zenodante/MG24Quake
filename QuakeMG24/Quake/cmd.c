@@ -460,7 +460,8 @@ void Cmd_Exec_f(void)
     }
 
     printf("------Load from Cmd Exec: %s\r\n", Cmd_Argv(1));
-    f = (char*) getExtMemPointerToFileInPak(Cmd_Argv(1), NULL);
+    unsigned int scriptBytes = 0;
+    f = (char*) getExtMemPointerToFileInPak(Cmd_Argv(1), &scriptBytes);
 //	printf("<BEGIN FILE CONTENT>\r\n%s\r\n<END FILE CONTENT>\r\n", f);
     if (!f)
     {
@@ -476,7 +477,7 @@ void Cmd_Exec_f(void)
     int quotes = 0;
     char c;
     // slow as hell. but executed few times.
-    while ((c = extMemGetByteFromAddress(f)) != 0)
+    while (scriptBytes-- && (c = extMemGetByteFromAddress(f)) != 0)
     {
         f++;
         line[chPos] = c;
@@ -496,8 +497,10 @@ void Cmd_Exec_f(void)
                 chPos = 0;
                 Cmd_ExecuteString(line, src_command);
             }
+            chPos = 0;
         }
     }
+    if (chPos) { line[chPos] = 0; Cmd_ExecuteString(line, src_command); }
 }
 // next-hack: some debug cmds...
 void Cmd_StepX_f(void)

@@ -11,11 +11,15 @@ IMA_STEP=(7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,7
 IMA_INDEX=(-1,-1,-1,-1,2,4,6,8); ADPCM_BLOCK_SAMPLES=256; ADPCM_HDR=struct.Struct('<4sIIHH'); ADPCM_BLOCK_HDR=struct.Struct('<hBBH')
 def align4(n):return(n+3)&~3
 def read_pak(path):
- b=Path(path).read_bytes();magic,doff,dlen=PAK_HDR.unpack_from(b)
+ b=Path(path).read_bytes()
+ if len(b)<12:raise ValueError('truncated PAK header')
+ magic,doff,dlen=PAK_HDR.unpack_from(b)
  if magic!=b'PACK' or dlen%64 or doff+dlen>len(b):raise ValueError('invalid PAK')
  out=OrderedDict()
  for p in range(doff,doff+dlen,64):
-  raw,off,n=PAK_ENT.unpack_from(b,p);name=raw.split(b'\0',1)[0].decode('ascii');out[name]=b[off:off+n]
+  raw,off,n=PAK_ENT.unpack_from(b,p);name=raw.split(b'\0',1)[0].decode('ascii')
+  if not name or name in out or off>len(b) or n>len(b)-off:raise ValueError('invalid/duplicate PAK entry')
+  out[name]=b[off:off+n]
  return out
 def write_pak(files,path):
  names=list(files);doff=12;dlen=64*len(names);pos=doff+dlen;directory=[];payload=bytearray()
@@ -63,13 +67,18 @@ def parse_bsp(data):
  if len(data)<BSP_HDR_SIZE:raise ValueError('truncated BSP')
  if struct.unpack_from('<I',data)[0]!=BSP_VERSION:raise ValueError('bad BSP version')
  lumps=[]
- for i in range(BSP_LUMPS):off,n=struct.unpack_from('<II',data,4+i*8);lumps.append((off,n,data[off:off+n]))
+ for i in range(BSP_LUMPS):
+  off,n=struct.unpack_from('<II',data,4+i*8)
+  if off>len(data) or n>len(data)-off or (n and off<BSP_HDR_SIZE):raise ValueError('BSP lump out of range')
+  lumps.append((off,n,data[off:off+n]))
+ spans=sorted((o,o+n) for o,n,_ in lumps if n)
+ if any(a[1]>b[0] for a,b in zip(spans,spans[1:])):raise ValueError('overlapping BSP lumps')
  return lumps
 def projected_bsp_size(data,mnode_size,mleaf_size):
  lumps=parse_bsp(data);faces=lumps[7][1]//20;nodes=lumps[5][1]//24;leafs=lumps[10][1]//28;nodeblock=4+2*faces+mnode_size*nodes+mleaf_size*leafs;pos=BSP_HDR_SIZE
  for i in LUMP_ORDER:pos=align4(pos);pos+=0 if i==10 else nodeblock if i==5 else lumps[i][1]
  return pos,nodeblock
-def convert(files,bsp_mode,mnode_size,mleaf_size):
+def convert(files,bsp_mode,mnode_size,mleaf_size,alias_layout="stream"):
  out=OrderedDict();manifest={'files':[],'totals':{'input':0,'output':0},'notes':[]};mdl_in=mdl_out=mdl_count=0;snd={'files':0,'source_file_bytes':0,'converted_bytes':0,'duration_seconds':0.0,'source_rates':{},'source_bits':{},'samples':0,'blocks':0,'errors':0}
  for name,data in files.items():
   low=name.lower();result=data;kind='copy';extra={}
@@ -84,12 +93,14 @@ def convert(files,bsp_mode,mnode_size,mleaf_size):
    except Exception as e:kind='bsp_error_passthrough';extra['error']=str(e)
   elif low.endswith('.mdl'):
    mdl_count+=1;mdl_in+=len(data)
-   try:result,meta=convert_mdl(data);kind='mdl_mg24_memory_ready';extra['mdl']=meta;mdl_out+=len(result)
-   except Exception as e:kind='mdl_error_passthrough';extra['error']=str(e);mdl_out+=len(data)
+   try:result,meta=convert_mdl(data,xip_skins=alias_layout=="xip");kind='mdl_mg24_memory_ready';extra['mdl']=meta;mdl_out+=len(result)
+   except Exception as e:
+    if alias_layout=='xip': raise ValueError(f'{name}: XIP model conversion failed: {e}') from e
+    kind='mdl_error_passthrough';extra['error']=str(e);mdl_out+=len(data)
   out[name]=result;rec={'name':name,'kind':kind,'input_bytes':len(data),'output_bytes':len(result),'delta':len(result)-len(data)};rec.update(extra);manifest['files'].append(rec);manifest['totals']['input']+=len(data);manifest['totals']['output']+=len(result)
- manifest['sound_totals']=snd;manifest['mdl_totals']={'files':mdl_count,'input_bytes':mdl_in,'output_bytes':mdl_out,'delta_bytes':mdl_out-mdl_in};manifest['notes']+=['Sound is QAD1 block IMA ADPCM: 11025 Hz mono, 256 samples/block, independent predictor/index per block for bounded random access and looping.','RP2350 keeps native BSP node/leaf data; MG24 node/leaf format is rejected.'];return out,manifest
+ manifest['alias_layout']=alias_layout;manifest['sound_totals']=snd;manifest['mdl_totals']={'files':mdl_count,'input_bytes':mdl_in,'output_bytes':mdl_out,'delta_bytes':mdl_out-mdl_in};manifest['notes']+=['Sound is QAD1 block IMA ADPCM: 11025 Hz mono, 256 samples/block, independent predictor/index per block for bounded random access and looping.','RP2350 keeps native BSP node/leaf data; MG24 node/leaf format is rejected.'];return out,manifest
 def main():
- ap=argparse.ArgumentParser();ap.add_argument('input',type=Path);ap.add_argument('output',type=Path);ap.add_argument('--manifest',type=Path);ap.add_argument('--bsp-mode',default='analyze');ap.add_argument('--mnode-size',type=int,default=24);ap.add_argument('--mleaf-size',type=int,default=24);args=ap.parse_args();files=read_pak(args.input);converted,m=convert(files,args.bsp_mode,args.mnode_size,args.mleaf_size);args.output.parent.mkdir(parents=True,exist_ok=True);m['pak_output_bytes']=write_pak(converted,args.output)
+ ap=argparse.ArgumentParser();ap.add_argument('input',type=Path);ap.add_argument('output',type=Path);ap.add_argument('--manifest',type=Path);ap.add_argument('--alias-layout',choices=('stream','xip'),default='stream');ap.add_argument('--bsp-mode',default='analyze');ap.add_argument('--mnode-size',type=int,default=24);ap.add_argument('--mleaf-size',type=int,default=24);args=ap.parse_args();files=read_pak(args.input);converted,m=convert(files,args.bsp_mode,args.mnode_size,args.mleaf_size,args.alias_layout);args.output.parent.mkdir(parents=True,exist_ok=True);m['pak_output_bytes']=write_pak(converted,args.output)
  if args.manifest:args.manifest.write_text(json.dumps(m,indent=2))
  s=m['sound_totals'];print(f'Python converter: {m["totals"]["input"]:,} -> {m["totals"]["output"]:,} bytes');print(f'Sound QAD1 IMA ADPCM: {s["files"]} files, {s["source_file_bytes"]:,} -> {s["converted_bytes"]:,} bytes, {s["blocks"]} blocks')
 if __name__=='__main__':main()

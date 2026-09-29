@@ -36,9 +36,6 @@
 #else
 #include "extMemory.h"
 #endif
-#if WIN32
-#include "SDL.h"
-#endif
 model_t *loadmodel;
 #if RETAIL_QUAKE_PAK_SUPPORT
 #pragma GCC optimize("Os") //
@@ -187,6 +184,9 @@ byte* Mod_DecompressVis(byte *in, model_t *model)
 
 byte* Mod_LeafPVS(mleaf_t *leaf, model_t *model)
 {
+#if QMAC_GAME
+    extern byte *game_leaf_pvs(mleaf_t*,model_t*);return game_leaf_pvs(leaf,model);
+#endif
 #if WIN32 && 0
         static mleaf_t *oldleaf;
         if (oldleaf == leaf)
@@ -394,7 +394,17 @@ void Mod_LoadAliasModelMemoryReady(model_t *mod, void *buffer, uint32_t size)
     stvert_t *pstverts = storeToInternalFlash((byte*) buffer + header.stverts, sizeof(*pstverts) * rmdl.numverts);
 #endif
     // loading skins is a pain in the ass.
+    #if QMAC_GAME
+    maliasskindesc_t *pskindesc = getCurrentInternalFlashPtr();
+    for (int k=0;k<rmdl.numskins;k++) {
+        uint32_t words[2]; memcpy(words,(byte*)buffer+header.skindesc+8*k,8);
+        maliasskindesc_t native={0};native.type=words[0]&1;native.skin=words[0]>>1;
+        native.originalSkin=words[1];native.pCachedSkin=(byte*)(uintptr_t)UINT32_MAX;
+        storeToInternalFlash(&native,sizeof native);
+    }
+    #else
     maliasskindesc_t *pskindesc = storeToInternalFlash((byte*) buffer + header.skindesc, sizeof(*pskindesc) * rmdl.numskins);
+    #endif
 
     for (int i = 0; i < rmdl.numskins; i++)
     {
@@ -436,7 +446,7 @@ void Mod_LoadAliasModelMemoryReady(model_t *mod, void *buffer, uint32_t size)
             newHeader->frames[i].frame = (byte*) maliasGroupPtr - (byte*) ptr;
         }
     }
-    newHeader->extMemAddress = (int) buffer;
+    newHeader->extMemAddress = (uintptr_t) buffer;
     newHeader->triangles = header.triangles;
     newHeader->model = (byte*) prmdl - (byte*) ptr;
     newHeader->stverts = (byte*) pstverts - (byte*) ptr;
@@ -536,6 +546,12 @@ model_t* Mod_LoadModel(model_t *mod, qboolean crash)
     extMemGetDataFromAddress(&id, buf, sizeof(id));
     switch (id)
     {
+#if QMAC_GAME
+        case 0x314e4151:
+        case 0x314e5351:
+        case 0x314e4251:
+        case 0x31564c51: { extern void game_bind_brush(model_t*,const char*);game_bind_brush(mod,name);break; }
+#endif
         case IDPOLYHEADER:
 #if USE_ORIGINAL_ALIAS_MODEL
 		Mod_LoadAliasModel (mod, buf);
@@ -547,7 +563,14 @@ model_t* Mod_LoadModel(model_t *mod, qboolean crash)
         case IDSPRITEHEADER:
             Mod_LoadSpriteModel(mod, buf);
             break;
+#if QMAC_GAME
         case IDPOLYHEADER_MEMORY_READY:
+            Sys_Error("Full Mac game requires IDPX skins; rebuild with --resource-profile mac-game");
+            break;
+        case 0x58504449:
+#else
+        case IDPOLYHEADER_MEMORY_READY:
+#endif
             Mod_LoadAliasModelMemoryReady(mod, buf, size);
             break;
         default:
@@ -674,7 +697,12 @@ system("pause");
  */
 
 byte *mod_base;
-#if !TEXTURE_HAS_ANIM_POINTERS
+#if TEXTURE_HAS_ANIM_POINTERS
+texture_t* Mod_GetNextAnimTexture(texture_t *base){return base->anim_next;}
+texture_t* Mod_GetAlternateAnimTexture(texture_t *base){return base->alternate_anims;}
+void Mod_SetNextAnimTexture(texture_t *base,texture_t *next){base->anim_next=next;}
+void Mod_SetAlternateAnimTexture(texture_t *base,texture_t *alternate){base->alternate_anims=alternate;}
+#else
 texture_t* Mod_GetNextAnimTexture(texture_t *base)
 {
     return (texture_t*) ((byte*) base + base->anim_next_ofs);
@@ -781,7 +809,7 @@ void Mod_LoadTextures(lump_t *l, int *numTextures)
 
         if (!mt || mt->name[0] != '+')
             continue;
-        if (tx->anim_next_ofs)
+        if (tx->anim_total)
             continue;
         // find the number of frames in the animation
         memset(anims, 0, sizeof(anims));
@@ -853,7 +881,7 @@ void Mod_LoadTextures(lump_t *l, int *numTextures)
             tx2->anim_max = (j + 1) * ANIM_CYCLE;
 
             Mod_SetNextAnimTexture(tx2, anims[(j + 1) % max]);
-            if (tx2->anim_next_ofs == 0)
+            if (Mod_GetNextAnimTexture(tx2) == 0)
                 printf("0 NEXT ANIM OFS");
             if (altmax)
                 Mod_SetAlternateAnimTexture(tx2, altanims[0]);
@@ -870,13 +898,20 @@ void Mod_LoadTextures(lump_t *l, int *numTextures)
 
             Mod_SetNextAnimTexture(tx2, altanims[(j + 1) % altmax]);
 
-            if (tx2->anim_next_ofs == 0 && altmax > 1)
+            if (Mod_GetNextAnimTexture(tx2) == 0 && altmax > 1)
                 printf("0 NEXT ANIM OFS alt");
             if (max)
                 Mod_SetAlternateAnimTexture(tx2, anims[0]);
         }
     }
 
+    #if TEXTURE_HAS_ANIM_POINTERS
+    texture_t *destination = getCurrentInternalFlashPtr();
+    for (int k=0;k<m->nummiptex;k++) {
+        if (textures_data[k].anim_next) textures_data[k].anim_next = destination + (textures_data[k].anim_next-textures_data);
+        if (textures_data[k].alternate_anims) textures_data[k].alternate_anims = destination + (textures_data[k].alternate_anims-textures_data);
+    }
+    #endif
     texture_t *buff = textures_data;
     buff = storeToInternalFlash(buff, sizeof(texture_t) * m->nummiptex);
     for (i = 0; i < m->nummiptex; i++)
@@ -1042,7 +1077,7 @@ void Mod_LoadTexinfo(lump_t *l, int numTextures)
     out = (void*) stackBuffer;
     loadmodel->brushModelData->texinfo = getCurrentInternalFlashPtr();
     //
-    extMemSetCurrentAddress((uint32_t) pin);
+    extMemSetCurrentAddress(pin);
     for (i = 0; i < count; i++)
     {
         extMemGetDataFromCurrentAddress(&in, sizeof(in));
@@ -1214,7 +1249,7 @@ void Mod_LoadFaces(lump_t *l, lump_t *nodelump)
     {
         FIXME("ERROR, POINTER BROKEN");
     }
-    extMemSetCurrentAddress((uint32_t) pin);
+    extMemSetCurrentAddress(pin);
 
     byte stackBuffer[sizeof(*out) * MAX_TEMP_LOAD_FACES];
     out = (void*) stackBuffer;
@@ -1573,7 +1608,7 @@ void Mod_LoadClipnodes(lump_t *l, int *clipnodes)
     hull->clip_maxs[0] = 32;
     hull->clip_maxs[1] = 32;
     hull->clip_maxs[2] = 64;
-    extMemSetCurrentAddress((uint32_t) pin);
+    extMemSetCurrentAddress(pin);
     for (i = 0; i < count; i++)
     {
         extMemGetDataFromCurrentAddress(&in, sizeof(in));
@@ -1805,7 +1840,7 @@ void Mod_LoadSurfedges(lump_t *l)
 
     out = (void*) stackBuffer;
 
-    extMemSetCurrentAddress((uint32_t) in);
+    extMemSetCurrentAddress(in);
     loadmodel->brushModelData->surfedges = getCurrentInternalFlashPtr();
 //next-hack: FIXME: we might want to speed-up this, by reading everything from extFlash
     for (i = 0; i < count; i++)
@@ -1864,7 +1899,7 @@ void Mod_LoadPlanes(lump_t *l)
 
     loadmodel->brushModelData->planes = getCurrentInternalFlashPtr();
 
-    extMemSetCurrentAddress((uint32_t) pin);
+    extMemSetCurrentAddress(pin);
     //
     for (i = 0; i < count; i++)
     {

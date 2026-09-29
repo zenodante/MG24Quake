@@ -595,7 +595,9 @@ static inline void* PROG_TO_EDICT(short e)
     #define PROG_TO_EDICT(e) ((edict_t *)((byte *)staticZone + ((e) << 2)))
 #endif
 #else
+#if !QMAC_MG24
 #error
+#endif
 #define	EDICT_TO_PROG(e) ((byte *)e - (byte *)sv.edicts)
 #define PROG_TO_EDICT(e) ((edict_t *)((byte *)sv.edicts + e))
 #endif // EDICTS_USE_SHORT_PTR

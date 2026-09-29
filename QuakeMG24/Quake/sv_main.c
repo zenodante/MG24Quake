@@ -251,7 +251,6 @@ void SV_SendServerinfo(client_t *client)
     sprintf(message, getStringFromIndex(get_qcc_message(sv.edicts)));
 #if WIN32
     printf("Message is %s\r\n", message);
-    FIXME("");
 #endif
 #endif
     MSG_WriteString(&client->message, message);

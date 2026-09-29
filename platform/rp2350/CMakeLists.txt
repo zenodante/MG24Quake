@@ -106,3 +106,5 @@ set_property(TARGET quake_rp2350_engine_phase1 APPEND PROPERTY LINK_DEPENDS
     "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/make_uf2.py"
     "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/flash_layout.py"
     "${CMAKE_CURRENT_LIST_DIR}/../../Tools/RP2350Pack/check_firmware.py")
+
+add_subdirectory(game)

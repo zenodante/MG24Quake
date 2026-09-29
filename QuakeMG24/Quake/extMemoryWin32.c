@@ -29,7 +29,9 @@
 
 #include "extMemoryWin32.h"
 #include "quakedef.h"
-#ifdef WIN32
+#if QRP_FULL_GAME
+/* Target XIP is directly mapped; no simulated external-memory array. */
+#elif defined(WIN32)
 uint8_t ext_memory[EXT_MEMORY_SIZE];
 #else
 uint8_t *ext_memory = (void*) 0x9000000;
@@ -128,7 +130,7 @@ void* extMemGetDataFromCurrentAddress(void *dest, unsigned int length)
 static int asyncSize = 0;
 static void * asyncDest = NULL;
 //static uint32_t asyncAddress = 0;
-void * extMemStartAsynchDataRead(uint32_t address, void * dest, uint32_t cnt)
+void * extMemStartAsynchDataRead(uintptr_t address, void * dest, uint32_t cnt)
 {
     asyncDest = dest;
     asyncSize = cnt;
@@ -182,12 +184,15 @@ uint8_t extMemGetDMAByte(void)
 {
     return dmaByte;
 }
-void extMemAsynchReadByteFromAddress(uint32_t address)
+void extMemAsynchReadByteFromAddress(uintptr_t address)
 {
     dmaByte = extMemGetByteFromAddress(address);
 }
 void extMemProgram(uint32_t address, uint8_t *buffer, uint32_t size)
 {
+    #if QRP_FULL_GAME
+    Sys_Error("Asset Flash is read-only");return;
+    #endif
     address &= extMemGetSize() - 1;
     printf("Address is 0x%x, size is %d. First Data: %x\r\n", address, size, buffer[0]);
     if (address + size > extMemGetSize())

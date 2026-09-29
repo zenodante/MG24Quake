@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Combine a Pico SDK RP2350 firmware UF2 with a checked QXIP1 asset image.
+"""Combine a Pico SDK RP2350 firmware UF2 with a checked QXIP asset image.
 
 Firmware occupies the reserved firmware region.  The immutable QXIP image is
 written at the configured asset partition start.  The persistent save partition
@@ -12,9 +12,6 @@ import struct
 from flash_layout import BASE, ASSET, SAVE, GUARD
 
 MAGIC0, MAGIC1, END = 0x0A324655, 0x9E5D5157, 0x0AB16F30
-QXIP_HEADER = struct.Struct("<4s9I")
-QXIP_MAGIC = b"QXIP"
-QXIP_VERSION = 1
 
 
 def parse_firmware(firmware):
@@ -75,40 +72,9 @@ def firmware_only(firmware):
 
 
 def validate_qxip(assets):
-    """Validate the QXIP1 top-level structure before placing it in Flash."""
-    if len(assets) < QXIP_HEADER.size:
-        raise ValueError("QXIP image is smaller than its header")
-
-    (magic, version, file_count, str_off, dir_off, data_off,
-     tex_off, tex_size, texture_count, image_size) = QXIP_HEADER.unpack_from(assets, 0)
-
-    if magic != QXIP_MAGIC or version != QXIP_VERSION:
-        raise ValueError("Expected QXIP1 asset image")
-    if image_size != len(assets):
-        raise ValueError("QXIP header image size does not match file size")
-    if len(assets) > SAVE - ASSET:
-        raise ValueError("QXIP image does not fit before save partition")
-
-    # xip_image_builder lays out header -> strings -> directory -> payloads ->
-    # texture store. Validate the top-level ranges without interpreting every
-    # asset; runtime performs its own per-entry bounds checks.
-    directory_bytes = file_count * 16
-    if not (QXIP_HEADER.size <= str_off <= dir_off <= data_off <= tex_off <= len(assets)):
-        raise ValueError("Invalid QXIP section ordering")
-    if dir_off + directory_bytes > data_off:
-        raise ValueError("QXIP directory overlaps payload area")
-    if tex_off + tex_size != len(assets):
-        raise ValueError("QXIP texture store size does not reach image end")
-    if tex_size < 12 + texture_count * 40:
-        raise ValueError("QXIP texture store is too small for its directory")
-    if assets[tex_off:tex_off + 4] != b"TEX1":
-        raise ValueError("Missing QXIP TEX1 texture store")
-
-    return {
-        "files": file_count,
-        "textures": texture_count,
-        "bytes": image_size,
-    }
+    from verify_xip import validate_qxip as validate
+    info = validate(assets)
+    return info
 
 
 def combine(firmware, assets):
@@ -142,9 +108,9 @@ def main():
     output.write_bytes(result)
     print(f"Wrote {output}: {len(result):,} UF2 bytes (container, not Flash usage)")
     if info:
-        print(f"QXIP1: {info['bytes']:,} bytes, {info['files']} files, "
+        print(f"QXIP: {info['bytes']:,} bytes, {info['files']} files, "
               f"{info['textures']} global textures @ flash 0x{ASSET:08x}")
-        print(f"Save partition begins at flash 0x{SAVE:08x} and is not written")
+        print(f"Resource boundary: 0x{SAVE:08x}; no dedicated save partition")
 
 
 if __name__ == "__main__":

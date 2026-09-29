@@ -128,7 +128,9 @@ qpic_t* Draw_CachePic(char *path)
 void Draw_Init(void)
 {
     draw_chars = W_GetLumpName("conchars");
+#if !QRP_FULL_GAME
     draw_chars = storeToInternalFlash(draw_chars, 16 * 16 * 8 * 8);
+#endif
     draw_disc = W_GetLumpName("disc");
     draw_backtile = W_GetLumpName("backtile");
     qpic_t backtile;

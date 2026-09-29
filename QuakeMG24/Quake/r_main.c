@@ -1081,7 +1081,8 @@ void R_EdgeDrawing(void)
 #else
     #error code supports edge in Z-buffer only!
 #endif
-    surf_t lsurfs[NUMSTACKSURFACES];
+    /* Element zero is the null surface sentinel; keep it inside the array. */
+    surf_t lsurfs[NUMSTACKSURFACES + 1];
 
         _g->base_edge_p = &ledges[0];
         _g->r_edges = (edge_t*) &ledges[1];
@@ -1093,13 +1094,13 @@ void R_EdgeDrawing(void)
     // next-hack: added this to prevent compiler complaining a pointer is outside bounds
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
-    _g->base_surf_p = &lsurfs[0] - 1;
+    _g->base_surf_p = &lsurfs[0];
 #pragma GCC diagnostic pop
     _g->surfaces = _g->base_surf_p;
-    _g->surf_max = &lsurfs[NUMSTACKSURFACES];
+    _g->surf_max = &lsurfs[NUMSTACKSURFACES + 1];
     for (int i = 0; i < NUMSTACKSURFACES; i++)
     {
-        lsurfs[i].surfIndex = i + 1;
+        lsurfs[i + 1].surfIndex = i + 1;
     }
     R_BeginEdgeFrame();
 #if PROFILE_SPEED

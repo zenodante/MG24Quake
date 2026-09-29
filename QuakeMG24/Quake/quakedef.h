@@ -1,3 +1,6 @@
+#ifndef QMAC_GAME
+#define QMAC_GAME 0
+#endif
 /*
  Quake port to Silicon Labs EFR32MG24 and MGM240x
  by Nicola Wrachien (next-hack in the comments)
@@ -41,7 +44,7 @@
 
 #define RETAIL_QUAKE_PAK_SUPPORT        1           // 1 will support the full retail version
 //
-#define CACHE_SKINS_TO_FLASH            1           //
+#define CACHE_SKINS_TO_FLASH 1           //
 //
 #define MIN_ZONE_FREE_TO_CACHE_COLORMAP (16384 + 3900)
 
@@ -57,7 +60,9 @@
 #define SPRITE_IN_INTERNAL_FLASH    0
 #define STATIC_ENTITY_SUPPORT       1
 #define SORT_SURFS 1                // sort surfaces to minimize loading from ext mem when drawing.
-#if WIN32
+#if QMAC_MG24
+#define FIXME(reason) Sys_Error("%s at %s:%d", reason, __FILE__, __LINE__)
+#elif WIN32
 #define FIXME(reason) do{printf("\r\n%s at line %d file %s\r\n", reason, __LINE__, __FILE__); system("pause");}while(0)
 #else
 
@@ -133,8 +138,13 @@ extern int alias_drawn_pixels;
 #define NEW_CACHED_EDGES                1
 #define ESPANS_HAVE_V                   0
 #define ENABLE_RECURSIVE_DRAWING        1
-#define EDICTS_USE_SHORT_PTR            1       // idem
-#define LINKS_USE_SHORT_PTR             1       // to put back to 1
+#if QMAC_MG24
+#define EDICTS_USE_SHORT_PTR 0
+#define LINKS_USE_SHORT_PTR 0
+#else
+#define EDICTS_USE_SHORT_PTR 1
+#define LINKS_USE_SHORT_PTR 1
+#endif
 #define	MAX_MOD_KNOWN	                  256
 #define ANGLE_PRECISION                 64      //
 #define CACHE_STATUS_BAR_TO_FLASH_IF_POSSIBLE       1
@@ -168,10 +178,19 @@ extern int alias_drawn_pixels;
 #define MAX_STATIC_ZONE                 (39292)
 
 #endif
+#if QMAC_GAME
+#undef MAX_STATIC_ZONE
+#define MAX_STATIC_ZONE (128 * 1024)
+#endif
 #define QDFLOAT                 float
 #define CREATE_DELTA_LIGHT_MAP          1
 #define BETTER_EDICT_COMPATIBILITY      1
-#define SAVE_GAME_SIZE                  (65536)  // should be enough.
+#if QMAC_GAME
+#define SAVE_GAME_SIZE (256 * 1024)
+#else
+#define SAVE_GAME_SIZE (65536)
+#endif
+//  // should be enough.
 #define		MAXCMDLINE	40
 #define MAX_HISTORY_LINES 1
 #if BETTER_EDICT_COMPATIBILITY

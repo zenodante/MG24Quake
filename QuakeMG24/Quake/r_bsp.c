@@ -482,7 +482,7 @@ void R_RecursiveClipBPoly(bedge_t *pedges, mnode_t *pnode, msurface_t *psurf)
                     unsigned int index = pn->node_idx;
 #endif
                     checkNodeIndex(index, -1, __LINE__);
-                    if ((pn->contents != CONTENTS_SOLID) && (_g->visleaves[index >> 3] & (1 << (index & 7))))
+                    if ((pn->contents != CONTENTS_SOLID) && (_g->visleaves[index >> 3] & (1u << (index & 7))))
 #else
           if (pn->contents != CONTENTS_SOLID)
 #endif
@@ -509,7 +509,7 @@ void R_RecursiveClipBPoly(bedge_t *pedges, mnode_t *pnode, msurface_t *psurf)
                     unsigned int index = pn->node_idx;
 #endif
                     checkNodeIndex(index, 0, __LINE__);
-                    if ((_g->visnodes[index >> 3] & (1 << (index & 7))))
+                    if ((_g->visnodes[index >> 3] & (1u << (index & 7))))
 #endif
 #if NODE_HAS_CHILDREN_POINTERS
               R_RecursiveClipBPoly (psideedges[i], pnode->children[i], psurf);
@@ -741,7 +741,7 @@ int isNodeVisible(mnode_t *node)
 #else
         unsigned int index = node->node_idx;
 #endif
-        if ((_g->visnodes[index >> 3] & (1 << (index & 7))))
+        if ((_g->visnodes[index >> 3] & (1u << (index & 7))))
             return 1;
     }
     else
@@ -756,7 +756,7 @@ int isNodeVisible(mnode_t *node)
         unsigned int index = node->node_idx;     // common with leaf.
 #endif
         checkNodeIndex(index, -1, __LINE__);
-        if ((_g->visleaves[index >> 3] & (1 << (index & 7))))
+        if ((_g->visleaves[index >> 3] & (1u << (index & 7))))
             return 1;
     }
     return 0;
@@ -801,7 +801,7 @@ void R_RecursiveWorldNode(mnode_t *node, int clipflags)
     {
         for (i = 0; i < 4; i++)
         {
-            if (!(clipflags & (1 << i)))
+            if (!(clipflags & (1u << i)))
                 continue; // don't need to clip against it
 
             // generate accept and reject points
@@ -847,7 +847,7 @@ void R_RecursiveWorldNode(mnode_t *node, int clipflags)
 #endif
 
             if (d >= 0)
-                clipflags &= ~(1 << i); // node is entirely on screen
+                clipflags &= ~(1u << i); // node is entirely on screen
         }
     }
 
@@ -870,7 +870,7 @@ void R_RecursiveWorldNode(mnode_t *node, int clipflags)
             int index = (*mark) - cl.worldmodel->surfaces;
             if (index >= MAX_SURFACES)
                 FIXME("BUUUU");
-            surfMarked[index / 8] |= 1 << (index % 8);
+            surfMarked[index / 8] |= 1u << (index % 8);
             #error
 #endif
         mark++;
@@ -891,7 +891,7 @@ void R_RecursiveWorldNode(mnode_t *node, int clipflags)
             do
             {
                 unsigned int index = (*markIdx);
-                _g->surfMarked[index / 32] |= 1 << (index % 32);
+                _g->surfMarked[index / 32] |= 1u << (index % 32);
                 markIdx++;
             }
             while (--c);
@@ -907,7 +907,7 @@ void R_RecursiveWorldNode(mnode_t *node, int clipflags)
              oldArrayIndex = index / 32;
              value = _g->surfMarked[oldArrayIndex];
            }
-           value |= 1 << (index % 32);
+           value |= 1u << (index % 32);
    markIdx++;
  } while (--c);
  _g->surfMarked[oldArrayIndex] = value;
@@ -996,7 +996,7 @@ void R_RecursiveWorldNode(mnode_t *node, int clipflags)
 #else
                     int surfIndex = surf->surfIdx; //surf - cl.worldmodel->brushModelData->surfaces;
 #endif
-                    if ((surf->flags & SURF_PLANEBACK) && (_g->surfMarked[surfIndex / 32] & (1 << (surfIndex % 32))))
+                    if ((surf->flags & SURF_PLANEBACK) && (_g->surfMarked[surfIndex / 32] & (1u << (surfIndex % 32))))
 #endif
                     {
 #if            (r_drawpolys) // note: false by default
@@ -1039,7 +1039,7 @@ void R_RecursiveWorldNode(mnode_t *node, int clipflags)
 #else
                     int surfIndex = surf->surfIdx; //surf - cl.worldmodel->brushModelData->surfaces;
 #endif
-                    if (!(surf->flags & SURF_PLANEBACK) && (_g->surfMarked[surfIndex / 32] & (1 << (surfIndex % 32))))
+                    if (!(surf->flags & SURF_PLANEBACK) && (_g->surfMarked[surfIndex / 32] & (1u << (surfIndex % 32))))
 #endif
                     {
 #if (r_drawpolys) // false by default

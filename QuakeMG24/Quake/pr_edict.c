@@ -1934,6 +1934,18 @@ void ED_LoadFromFile(char *data)
              FIXME("not allocating info null");
              continue;
              }*/
+#if QMAC_GAME
+            /* info_null's spawn function immediately removes it. Its editor-only
+             * fields do not belong to the minimized runtime entity layout. */
+            if (currentParseClassName == info_null_string_index) continue;
+            /* Light style is never read by brush-function or item logic.
+             * Stock maps retain this editor property on buttons and keys;
+             * the MG24 class layouts deliberately omit it. */
+            int parsedType = qcc_classname2type[currentParseClassName];
+            if (parsedType == func_edict_idx || parsedType == item_edict_idx) tmpent.v.qcc_style = 0;
+            /* Patrol targets use origin/target only, never orientation. */
+            if (parsedType == path_corner_edict_idx) memset(&tmpent.v.qcc_angles,0,sizeof tmpent.v.qcc_angles);
+#endif
             ent = ED_Alloc(currentParseClassName);
 //            printf("Ent Ptr: %p static zone: %p distance %d sv.edicts distance %d\r\n", ent, staticZone, (byte*) ent - (byte*)staticZone,  (byte*) ent - (byte*)sv.edicts);
             ent->qcc_classname = currentParseClassName;

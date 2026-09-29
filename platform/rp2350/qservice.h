@@ -16,6 +16,7 @@ uint16_t qservice_buttons_pressed(void);
  * active; production QAD1 data is immutable XIP and is decoded on core 1. */
 bool qservice_sound_start(unsigned channel,const qsound_t *sound,unsigned left,unsigned right);
 bool qservice_sound_stop(unsigned channel);
+bool qservice_sound_gain(unsigned channel,unsigned left,unsigned right);
 bool qservice_sound_stop_all(uint32_t fence);
 bool qservice_sound_fence_done(uint32_t fence);
 void qservice_stats(qservice_stats_t *stats);

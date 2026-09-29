@@ -32,18 +32,28 @@
 #include <stdint.h>
 #define USE_EXT_MEMORY 1
 #ifdef WIN32
+#if QRP_FULL_GAME
+#define EXT_MEMORY_SIZE (16 * 1024 * 1024)
+#define ext_memory ((uint8_t*)0x10000000u)
+#else
 #define EXT_MEMORY_SIZE (64 * 1024 * 1024)
+#endif
 #define extMemGetSize() EXT_MEMORY_SIZE
 #define EXT_MEMORY_PAGE_SIZE    4096
+#if !QRP_FULL_GAME
 extern uint8_t ext_memory[EXT_MEMORY_SIZE];
+#endif
 void* extMemGetDataFromCurrentAddress(void *dest, unsigned int length);
+void *extMemStartAsynchDataRead(uintptr_t address,void *dest,uint32_t count);
+void extMemWaitAsynchDataRead(void);
+void extMemAsynchReadByteFromAddress(uintptr_t address);
 void extMemProgram(uint32_t address, uint8_t *buffer, uint32_t size);
 void* extMemGetDataFromAddress(void *dest, void *source, unsigned int length);
 uint8_t extMemGetByteFromAddress(void *address);
 void extMemSetCurrentAddress(void *address);
 static inline int isOnExternalFlash(void *address)
 {
-    return ( (uint64_t) address >=  (uint64_t) ext_memory && (uint64_t) address < (uint64_t) ext_memory + EXT_MEMORY_SIZE);
+    return ( (uintptr_t) address >=  (uintptr_t) ext_memory && (uintptr_t) address < (uintptr_t) ext_memory + EXT_MEMORY_SIZE);
 }
 static inline int extMemGetRemainingBytes(void)
 {
@@ -51,6 +61,9 @@ static inline int extMemGetRemainingBytes(void)
 }
 static inline void extMemErase(uint32_t address, uint32_t size)
 {
+    #if QRP_FULL_GAME
+    extern void Sys_Error(char*,...);Sys_Error("Asset Flash is read-only");return;
+    #endif
     address &= EXT_MEMORY_SIZE - 1;
     size = (size + EXT_MEMORY_PAGE_SIZE - 1) & ~( EXT_MEMORY_PAGE_SIZE - 1);
     address &=  ~( EXT_MEMORY_PAGE_SIZE - 1);

@@ -1795,6 +1795,12 @@ byte *COM_LoadFile (char *path, int usehunk)
 #endif
 byte* getExtMemPointerToFileInPak(char *filename, unsigned int *fileSize)
 {
+#if QMAC_GAME
+    extern byte *game_resource_file(const char*,unsigned*);return game_resource_file(filename,fileSize);
+#endif
+    #if QMAC_GAME
+    if (!strcmp(filename, "config.cfg")) { if (fileSize) *fileSize=0; return NULL; }
+    #endif
     // next-hack: special case for config.
     if (!strcmp(filename, "config.cfg"))
     {
@@ -1875,6 +1881,9 @@ byte* getExtMemPointerToFileInPak(char *filename, unsigned int *fileSize)
 
 int getDPackFile(dpackfile_t *packFile, int num)
 {
+#if QMAC_GAME
+    extern int game_resource_directory(dpackfile_t*,int);return game_resource_directory(packFile,num);
+#endif
     // get header data
     dpackheader_t header;
     extMemGetDataFromAddress(&header, PAK_ADDRESS, sizeof(header));
@@ -1887,6 +1896,9 @@ int getDPackFile(dpackfile_t *packFile, int num)
 }
 byte* COM_LoadFileFromExtMem(char *filename, unsigned int *fileSize)
 {
+#if QMAC_GAME
+    extern byte *game_resource_file(const char*,unsigned*);return game_resource_file(filename,fileSize);
+#endif
 #if USE_EXT_MEMORY
 #if MORE_PAKS
   searchpath_t *search;
@@ -1925,7 +1937,7 @@ byte* COM_LoadFileFromExtMem(char *filename, unsigned int *fileSize)
     extMemGetDataFromAddress(&header, PAK_ADDRESS, sizeof(header));
     dpackfile_t packFile;
     int numfiles = header.dirlen / sizeof(packFile);
-    extMemSetCurrentAddress((int) PAK_ADDRESS + header.dirofs);
+    extMemSetCurrentAddress(PAK_ADDRESS + header.dirofs);
     for (int i = 0; i < numfiles; i++)
     {
         // load file name
@@ -2041,6 +2053,9 @@ byte *COM_LoadStackFile (char *path, void *buffer, int bufsize)
  */
 int COM_LoadPackFile(char *packfile)
 {
+#if QMAC_GAME
+    extern int game_resources_open(const char*);return game_resources_open(packfile);
+#endif
     dpackheader_t *header;
     int numpackfiles;
 #if !HAS_EXT_FLASH
@@ -2114,7 +2129,12 @@ void COM_InitFilesystem(void)
 {
 
 #if WIN32
+    #if QMAC_GAME
+    extern const char *qmac_game_pak;
+    COM_LoadPackFile((char*)qmac_game_pak);
+    #else
     COM_AddGameDirectory (SDL_GetBasePath() );
+    #endif
 #endif
 }
 /*

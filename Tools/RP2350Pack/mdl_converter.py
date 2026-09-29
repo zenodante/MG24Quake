@@ -119,11 +119,12 @@ def parse_source(data):
             frames.append(('group',bmin,bmax,intervals,group))
     return v,skins,st,tris,frames
 
-def convert_mdl(data):
+def convert_mdl(data, include_original_skins=False, xip_skins=False):
+    if include_original_skins and xip_skins: raise ValueError("skin layouts are mutually exclusive")
     v,skins,st,tris,frames=parse_source(data); numskins,sw,sh,nv,nt,nf,synctype,flags=v[12:20]
     # disk_aliashdr_t base 20 + 12 bytes per frame descriptor; C allocates sizeof(base)+nf*desc.
     header_size=20+12*nf; model_off=header_size; base_size=header_size+84+4*nv+8*nt
-    out=bytearray(base_size); out[0:4]=struct.pack('<I',IDPM); struct.pack_into('<I',out,4,model_off)
+    out=bytearray(base_size); out[0:4]=struct.pack('<I',0x58504449 if xip_skins else IDPM); struct.pack_into('<I',out,4,model_off)
     # Preserve disk_mdl_t fields exactly; C endian-copies them.
     out[model_off:model_off+84]=data[:84]
     st_off=model_off+84; tri_off=st_off+4*nv; struct.pack_into('<II',out,8,st_off,0); struct.pack_into('<I',out,16,tri_off)
@@ -131,17 +132,27 @@ def convert_mdl(data):
         if not (0<=s<32768 and -32768<=t<32768): raise ValueError('stvert outside packed range')
         word=(seam&1)|((s&0x7fff)<<1)|((t&0xffff)<<16); struct.pack_into('<I',out,st_off+4*i,word)
     # skin descriptors are 4-byte packed type:1/skin:31 in active minimized layout.
-    skin_desc_off=len(out); out.extend(b'\0'*(4*numskins)); struct.pack_into('<I',out,12,skin_desc_off)
+    skin_stride=8 if xip_skins else 12 if include_original_skins else 4
+    skin_desc_off=len(out); out.extend(b'\0'*(skin_stride*numskins)); struct.pack_into('<I',out,12,skin_desc_off)
     skin_offsets=[]
     for si,skin in enumerate(skins):
         skin_start=len(out); skin_offsets.append(skin_start)
-        for tri in tris:
+        for tri in ([] if xip_skins else tris):
             out.extend(skin_triangle_bytes(skin,sw,sh,coords_for(tri,st,sw)))
             while len(out)&3: out.append(0)
-        struct.pack_into('<I',out,skin_desc_off+4*si,(skin_start<<1)&0xfffffffe)
+        struct.pack_into('<I',out,skin_desc_off+skin_stride*si,(skin_start<<1)&0xfffffffe)
+        if xip_skins:
+            struct.pack_into('<I',out,skin_desc_off+skin_stride*si+4,skin_start)
+            out.extend(skin)
     # triangle offset tables and packed mtriangle_t. Global skin stream offset matches C and is 4-aligned per triangle.
     stream_off=0
     for i,tri in enumerate(tris):
+        if xip_skins:
+            front,inds=tri
+            if any(x<0 or x>=min(nv,512) for x in inds): raise ValueError("MG24 packed triangle vertex overflow")
+            w0=(front&1)|((inds[0]&0x1ff)<<14)|((inds[1]&0x1ff)<<23)
+            struct.pack_into('<II',out,tri_off+8*i,w0,inds[2]&0x1ff)
+            continue
         coords=coords_for(tri,st,sw); vals,offs,buf,start,tsize,nextoff=offset_table(coords,stream_off); stream_off=nextoff
         while len(out)&3: out.append(0)
         tod=len(out); out.extend(struct.pack('<HHH',offs,buf,start)); out.extend(b''.join(struct.pack('<H',x) for x in vals))
@@ -150,6 +161,11 @@ def convert_mdl(data):
         w0=(front&1)|((tsize&0x1fff)<<1)|((inds[0]&0x1ff)<<14)|((inds[1]&0x1ff)<<23)
         w1=(inds[2]&0x1ff)|(((tod>>2)&0x7fff)<<9)|((len(vals)&0xff)<<24)
         struct.pack_into('<II',out,tri_off+8*i,w0,w1)
+    if include_original_skins:
+        for si,skin in enumerate(skins):
+            while len(out)&3: out.append(0)
+            struct.pack_into('<II',out,skin_desc_off+skin_stride*si+4,len(out),0xffffffff)
+            out.extend(skin)
     # frames: descriptors live in header; vertex arrays/groups appended after triangle metadata.
     frame_base=20
     for i,fr in enumerate(frames):
@@ -170,6 +186,6 @@ def convert_mdl(data):
                 while len(out)&3: out.append(0)
                 voff=len(out); out.extend(verts); pos=group_hdr_pos+4+12*j; out[pos:pos+8]=gbmin+gbmax; struct.pack_into('<I',out,pos+8,voff)
             out[frame_base+12*i:frame_base+12*i+8]=bmin+bmax; struct.pack_into('<I',out,frame_base+12*i+8,(goff<<1)|1)
-    meta={'skinwidth':sw,'skinheight':sh,'skins':numskins,'vertices':nv,'triangles':nt,'frames':nf,
+    meta={'format':'IDPX' if xip_skins else 'IDPM','skin_layout':'indexed_xip' if xip_skins else 'triangle_stream','skinwidth':sw,'skinheight':sh,'skins':numskins,'vertices':nv,'triangles':nt,'frames':nf,
           'input_bytes':len(data),'output_bytes':len(out),'skin_stream_bytes_per_skin':stream_off}
     return bytes(out),meta

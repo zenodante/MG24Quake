@@ -95,6 +95,10 @@ void W_LoadWadFile (char *filename)
 	infotableofs = header.infotableofs;
 	//
 	wad_lumps = (lumpinfo_t *)(wad_base + infotableofs);
+#if QRP_FULL_GAME
+    /* The offline compiler has already normalized the WAD directory. */
+    return;
+#endif
     byte *ptr = getCurrentInternalFlashPtr();
 	for (i=0, lump_p = wad_lumps ; i<wad_numlumps ; i++,lump_p++)
 	{

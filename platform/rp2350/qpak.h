@@ -14,17 +14,20 @@ typedef struct {
     const uint8_t *image;
     uint32_t bytes, files, blocks, directory, block_table, payload;
     uint32_t strings, texture_store, texture_store_bytes, texture_count;
+    uint32_t xip_version, level_maps, level_maps_bytes;
     qpak_format_t format;
 } qpak_t;
 typedef struct {
     uint32_t size, first_block, block_count, crc32;
-    uint32_t direct_offset, kind;
+    uint32_t direct_offset, kind, directory_index;
     bool direct;
 } qpak_file_t;
 typedef struct {
     const uint8_t *base;
     uint32_t bytes;
     uint32_t texture_count;
+    const uint8_t *texture_ids;
+    bool runtime;
     uint32_t lump_offset[QXIP_BSP_LUMPS];
     uint32_t lump_size[QXIP_BSP_LUMPS];
 } qpak_level_t;
@@ -42,8 +45,8 @@ bool qpak_read(const qpak_t *pak, const qpak_file_t *file, qpak_cache_t *cache,
 /* Returns an immutable XIP pointer when the requested bytes are contiguous. */
 const uint8_t *qpak_map(const qpak_t *pak, const qpak_file_t *file,
                         uint32_t offset, size_t length);
-/* QXIP1 level access. Non-texture lumps are immutable native BSP bytes. Lump 2
- * is a u32 global-texture-ID array rather than a Quake dmiptexlump_t. */
+/* Level views: QXIP3 uses QLV1 sections; QXIP2 uses BSP29 plus LMAP.
+ * Legacy LVL1 remains readable. All views borrow immutable image memory. */
 bool qpak_level_open(const qpak_t *pak,const qpak_file_t *file,qpak_level_t *level);
 const uint8_t *qpak_level_lump(const qpak_level_t *level,unsigned lump,size_t *bytes);
 bool qpak_level_texture_id(const qpak_level_t *level,unsigned index,uint32_t *texture_id);

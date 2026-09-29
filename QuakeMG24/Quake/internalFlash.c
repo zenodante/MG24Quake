@@ -88,6 +88,10 @@ void *reserveInternalFlashSize(int size)
     CHECK_ALIGN(size);
     int oldPointer = pointer;
         pointer += size;
+#if QMAC_MEMORY_AUDIT
+        extern void qmac_profile_alloc(void*,size_t,bool,const char*);
+        qmac_profile_alloc(&internalFlash[oldPointer],size,true,NULL);
+#endif
         return &internalFlash[oldPointer];
 }
 void * storeToInternalFlash2(void *buffer, int size, char *function, int line)
@@ -115,6 +119,10 @@ void * storeToInternalFlash2(void *buffer, int size, char *function, int line)
     }
     uint8_t *ptr = &internalFlash[pointer];
     pointer += size;
+#if QMAC_MEMORY_AUDIT
+    extern void qmac_profile_alloc(void*,size_t,bool,const char*);
+    qmac_profile_alloc(ptr,size,true,function);
+#endif
     return ptr;
 }
 void * storeToInternalFlashAtPointer(void *buffer, void *flashPos, int size)
@@ -378,5 +386,13 @@ void internalFlashResetToCommonZoneEnd(void)
 {
     // sets the pointer to the end to common zone
     pointer = APP_SIZE + commonSize;
+#if QMAC_MEMORY_AUDIT
+    extern void qmac_profile_flash_reset(void*);qmac_profile_flash_reset(internalFlash+pointer);
+#endif
 }
 
+
+#if QMAC_GAME
+size_t qmac_legacy_flash_used(void){return pointer-APP_SIZE;}
+size_t qmac_legacy_flash_reserved(void){return sizeof internalFlash;}
+#endif

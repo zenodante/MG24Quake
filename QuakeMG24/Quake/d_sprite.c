@@ -509,7 +509,7 @@ void D_DrawSprite(void)
     _g->cacheblock = (byte*) &r_spritedesc.pspriteframe->pixels[0];
 #if !SPRITE_IN_INTERNAL_FLASH
 #if ASYNCH_LOAD_SPRITE
-    _g->cacheblock = extMemStartAsynchDataRead((uint32_t) _g->cacheblock, getTextureCacheBuffer(), (_g->cachewidth * _g->sprite_height + 3) & ~3);
+    _g->cacheblock = extMemStartAsynchDataRead((uintptr_t) _g->cacheblock, getTextureCacheBuffer(), (_g->cachewidth * _g->sprite_height + 3) & ~3);
 #endif
 #endif
 // copy the first vertex to the last vertex, so we don't have to deal with

@@ -1,3 +1,11 @@
+# RP2350 Quake
+
+The complete engine target is now `quake_rp2350`; see [build, resources, controls
+and validation limits](game/README.md). It uses QRN1 resources at the 768 KiB
+boundary. The historical notes below describe the separate bring-up target.
+
+---
+
 # RP2350 port — hardware baseline and resource/file integration
 
 This target currently builds a **static textured world viewer and hardware

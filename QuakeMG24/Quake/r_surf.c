@@ -439,7 +439,7 @@ DRAWSURF_SEC void R_BuildLightMap(void)
  Returns the proper texture for a given time and base texture
  ===============
  */
-__attribute__ ((section(".drawsurf"))) texture_t* R_TextureAnimation(texture_t *base)
+DRAWSURF_SEC texture_t* R_TextureAnimation(texture_t *base)
 {
     int relative;
     int count;

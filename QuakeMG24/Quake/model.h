@@ -127,7 +127,9 @@ typedef struct texture_s
     unsigned int anim_total :10;				// total tenths in sequence ( 0 = no)
     int alternate_anim_ofs :24;
     int anim_min :8, anim_max :8;		// time for this frame min <=time< max. WAS SHORT
+#ifndef TEXTURE_HAS_ANIM_POINTERS
 #define TEXTURE_HAS_ANIM_POINTERS 0
+#endif
 #if TEXTURE_HAS_ANIM_POINTERS
 	struct texture_s *anim_next;		// in the animation sequence
 	struct texture_s *alternate_anims;	// bmodels in frame 1 use these
@@ -351,7 +353,11 @@ typedef struct mleaf_s
 #endif
     short nummarksurfaces;
     byte ambient_sound_level[NUM_AMBIENTS];
-} mleaf_t;
+}
+#if QMAC_MG24
+__attribute__((aligned(sizeof(void*))))
+#endif
+mleaf_t;
 
 #else
 typedef struct mnode_s
@@ -595,7 +601,7 @@ typedef struct
 } mtriangleOffsetData_t;
 typedef struct
 {
-    int extMemAddress;                // position in external memory.
+    uintptr_t extMemAddress;          // native address; disk headers remain 32-bit offsets
     int model;          //offset into mem
     int stverts;        // offset into mem
     int skindesc;       // offset into mem
@@ -707,7 +713,7 @@ typedef struct model_s
     // 2 bytes padding
     int16_t padding;
     //
-    int8_t numframes;          //  there are models with > 128 frames
+    uint8_t numframes;         // alias models may have 128..255 frames
     uint8_t flags;             // 8 bits (flags 1...128)
     uint8_t type;              // can be 2 bits 0, 1, 2
     uint8_t needload :2;      // note: NOT a qboolean! Damn you!

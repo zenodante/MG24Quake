@@ -44,7 +44,7 @@
 #if DYNAMIC_3D_VIEWPORT_SIZE
     short *d_zbuffer;   // zbuffer is 16 bit
 #else
-short d_zbuffer[_3D_VIEWPORT_SIZE];
+_Alignas(8) short d_zbuffer[_3D_VIEWPORT_SIZE];
 #endif
 
 #endif	// !id386

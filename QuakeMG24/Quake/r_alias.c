@@ -611,7 +611,10 @@ void R_AliasSetupSkin(void)
     //
     _g->r_affinetridesc.pskin = (void*) ((byte*) _g->paliashdr->extMemAddress + _g->pskindesc->skin);
 #if MODELS_HAVE_ORIGINAL_SKIN_TOO
-#if CACHE_SKINS_TO_FLASH && CACHEABLE_SKIN
+#if QMAC_GAME
+    _g->originalSkinInInternalFlash=1; /* Direct immutable XIP access, no skin copy. */
+    _g->r_affinetridesc.pOriginalskin=(void*)(_g->paliashdr->extMemAddress+_g->pskindesc->originalSkin);
+#elif CACHE_SKINS_TO_FLASH && CACHEABLE_SKIN
     if ( (uint32_t)_g->pskindesc->pCachedSkin != 0xFFFFFFFF)
     {
         _g->originalSkinInInternalFlash = 1;
@@ -762,7 +765,7 @@ void R_AliasDrawModel(alight_t *plighting)
 #endif
     _g->pmdl = (mdl_t*) ((byte*) _g->paliashdr + _g->paliashdr->model);
 
-    _g->r_affinetridesc.tempTriangleBuffer = extMemStartAsynchDataRead((uint32_t) (((byte*) _g->paliashdr->extMemAddress + _g->paliashdr->triangles)),
+    _g->r_affinetridesc.tempTriangleBuffer = extMemStartAsynchDataRead((uintptr_t) (((byte*) _g->paliashdr->extMemAddress + _g->paliashdr->triangles)),
         getTextureCacheBuffer(), sizeof(mtriangle_t) * _g->pmdl->numtris);
 
 // cache align

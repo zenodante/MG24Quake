@@ -179,11 +179,11 @@ DRAWSURF_SEC void D_CalcGradients(msurface_t *pface, int miplevel)
 
     t = 0x10000 * mipscale;
 #if MSURFACE_HAS_TEXINFO_POINTER
-    _g->sadjust = ((fixed16_t) (DotProduct (p_temp1, p_saxis) * 0x10000 + 0.5)) - ((pface->texturemins[0] << 16) >> miplevel) + pface->texinfo->vecs[0][3] * t;
-    _g->tadjust = ((fixed16_t) (DotProduct (p_temp1, p_taxis) * 0x10000 + 0.5)) - ((pface->texturemins[1] << 16) >> miplevel) + pface->texinfo->vecs[1][3] * t;
+    _g->sadjust = ((fixed16_t) (DotProduct (p_temp1, p_saxis) * 0x10000 + 0.5)) - ((pface->texturemins[0] * 65536) >> miplevel) + pface->texinfo->vecs[0][3] * t;
+    _g->tadjust = ((fixed16_t) (DotProduct (p_temp1, p_taxis) * 0x10000 + 0.5)) - ((pface->texturemins[1] * 65536) >> miplevel) + pface->texinfo->vecs[1][3] * t;
 #else
-	_g->sadjust = ((fixed16_t)(DotProduct (p_temp1, p_saxis) * 0x10000 + 0.5)) - ((pface->texturemins[0] << 16) >> miplevel) + ti->vecs[0][3]*t;
-	_g->tadjust = ((fixed16_t)(DotProduct (p_temp1, p_taxis) * 0x10000 + 0.5)) - ((pface->texturemins[1] << 16) >> miplevel) + ti->vecs[1][3]*t;
+	_g->sadjust = ((fixed16_t)(DotProduct (p_temp1, p_saxis) * 0x10000 + 0.5)) - ((pface->texturemins[0] * 65536) >> miplevel) + ti->vecs[0][3]*t;
+	_g->tadjust = ((fixed16_t)(DotProduct (p_temp1, p_taxis) * 0x10000 + 0.5)) - ((pface->texturemins[1] * 65536) >> miplevel) + ti->vecs[1][3]*t;
 
 #endif
 //
@@ -437,6 +437,9 @@ DRAWSURF_SEC void D_DrawSurfaces(void)
             {
                 if (!(lastSurfFlags & SURF_DRAWSKY))
                 {
+#if QMAC_MG24
+                    r_skysource=((msurface_t*)s->data)->texinfo->texture->extmemdata[0];
+#endif
                     R_MakeSky();
                     // this a dirty hack.
                     clearTextureCache();

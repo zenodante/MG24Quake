@@ -4,6 +4,11 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef QR_XIP_ONLY
+#define QR_CACHE(r) NULL
+#else
+#define QR_CACHE(r) (&(r)->cache)
+#endif
 static uint32_t u32(const uint8_t *p) { return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24; }
 static unsigned u16(const uint8_t *p) { return p[0]|(unsigned)p[1]<<8; }
 static float f32(const uint8_t *p) { uint32_t v=u32(p);float f;memcpy(&f,&v,4);return f; }
@@ -46,8 +51,15 @@ bool qr_init(qr_renderer_t *r,const qbsp_t *b) {
     if(!b || !b->pak || b->lump[QBSP_FACES].count>QR_MAX_FACES ||
        b->lump[QBSP_LEAVES].count>QR_MAX_LEAVES)return false;
     qpak_file_t cmap;
-    if(!qpak_find(b->pak,"gfx/colormap.lmp",&cmap) || cmap.size<sizeof r->colormap ||
-       !qpak_read(b->pak,&cmap,&r->cache,0,r->colormap,sizeof r->colormap))return false;
+    if(!qpak_find(b->pak,"gfx/colormap.lmp",&cmap) || cmap.size<64*256)return false;
+    r->color_rows=qpak_map(b->pak,&cmap,0,64*256);
+#ifndef QR_XIP_ONLY
+    if(!r->color_rows){
+        if(!qpak_read(b->pak,&cmap,QR_CACHE(r),0,r->colormap,sizeof r->colormap))return false;
+        r->color_rows=r->colormap;
+    }
+#endif
+    if(!r->color_rows)return false;
     r->world=b;r->ready=true;return true;
 }
 static float distance_to_plane(qr_vertex_t v,unsigned p) {
@@ -102,19 +114,19 @@ static void triangle(qr_renderer_t *r,qr_vertex_t a,qr_vertex_t b,qr_vertex_t c,
         // Keep float-to-int texture addressing bounded even for malformed maps.
         if(!isfinite(s)||!isfinite(t)||fabsf(s)>10000000||fabsf(t)>10000000)continue;
         float scale=1.0f/(1u<<r->mip);
-        unsigned texel=r->texture[wrap(t*scale,r->th)*r->tw+wrap(s*scale,r->tw)];
-        pixels[pos]=r->colormap[illumination(r,light,s,t)*256+texel];r->depth[pos]=depth;++r->stats.pixels;
+        unsigned texel=r->texture_pixels[wrap(t*scale,r->th)*r->tw+wrap(s*scale,r->tw)];
+        pixels[pos]=r->color_rows[illumination(r,light,s,t)*256+texel];r->depth[pos]=depth;++r->stats.pixels;
     }
 }
 static bool face(qr_renderer_t *r,uint32_t index,const qr_camera_t *camera,float sy,float cy,uint8_t *pixels) {
-    const qbsp_t *b=r->world;const uint8_t *f=qbsp_record(b,QBSP_FACES,index);
+    const qbsp_t *b=r->world;uint8_t f[20];if(!qbsp_face_record(b,index,f))return false;
     const uint8_t *plane=qbsp_record(b,QBSP_PLANES,u16(f));
     float side=-f32(plane+12);for(unsigned k=0;k<3;++k)side+=camera->position[k]*f32(plane+4*k);
     if((side<0)!=(u16(f+2)!=0))return true;
     unsigned n=u16(f+8);if(n<3 || n>QR_POLY_VERTS-8)return false;
     const uint8_t *ti=qbsp_record(b,QBSP_TEXINFO,u16(f+10));
     float mins[2]={INFINITY,INFINITY},maxs[2]={-INFINITY,-INFINITY};
-    for(unsigned i=0;i<n;++i){int32_t e=(int32_t)u32(qbsp_record(b,QBSP_SURFEDGES,u32(f+4)+i));
+    for(unsigned i=0;i<n;++i){int32_t e=qbsp_surfedge(b,u32(f+4)+i);
         const uint8_t *ed=qbsp_record(b,QBSP_EDGES,(uint32_t)(e<0?-(int64_t)e:e));
         const uint8_t *vertex=qbsp_record(b,QBSP_VERTICES,u16(ed+(e<0?2:0)));
         float p[3],uv[2];for(unsigned k=0;k<3;++k){p[k]=f32(vertex+4*k);if(!isfinite(p[k]) || fabsf(p[k])>10000000)return false;}
@@ -128,19 +140,36 @@ static bool face(qr_renderer_t *r,uint32_t index,const qr_camera_t *camera,float
     for(unsigned p=0;p<5 && n;++p){n=clip(r->poly[slot],n,r->poly[1-slot],p);slot=1-slot;}
     if(n<3)return true;
     int id=(int)u32(ti+32);
-    if(id!=r->texture_id){uint32_t off,w,h;unsigned mip;
-        for(mip=0;mip<4;++mip){if(!qbsp_texture_mip(b,(uint32_t)id,mip,&off,&w,&h,&r->cache))return false;
-            if((uint64_t)w*h<=sizeof r->texture)break;}
-        if(mip==4 || !qbsp_read(b,QBSP_TEXTURES,off,r->texture,w*h,&r->cache))return false;
-        r->texture_id=id;r->tw=w;r->th=h;r->mip=mip;
+    if(id!=r->texture_id){uint32_t w,h;
+        if(b->runtime){
+            r->texture_pixels=qbsp_texture_pixels(b,(uint32_t)id,0,&w,&h);
+            if(!r->texture_pixels)return false;
+            r->mip=0;
+        }else{
+#ifndef QR_XIP_ONLY
+            uint32_t off;unsigned mip;
+            for(mip=0;mip<4;++mip){if(!qbsp_texture_mip(b,(uint32_t)id,mip,&off,&w,&h,QR_CACHE(r)))return false;
+                if((uint64_t)w*h<=sizeof r->texture)break;}
+            if(mip==4 || !qbsp_read(b,QBSP_TEXTURES,off,r->texture,w*h,QR_CACHE(r)))return false;
+            r->texture_pixels=r->texture;r->mip=mip;
+#else
+            return false;
+#endif
+        }
+        r->texture_id=id;r->tw=w;r->th=h;
     }
     light_t l={0};
     if((int32_t)u32(f+16)>=0 && !(u32(ti+36)&1)){
         l.smin=floorf(mins[0]/16)*16;l.tmin=floorf(mins[1]/16)*16;
         l.w=(unsigned)(ceilf(maxs[0]/16)-floorf(mins[0]/16))+1;
         l.h=(unsigned)(ceilf(maxs[1]/16)-floorf(mins[1]/16))+1;
+        if(b->runtime){
+            const uint8_t *sf=qbsp_record(b,QBSP_FACES,index);
+            l.smin=(int16_t)u16(sf+12);l.tmin=(int16_t)u16(sf+14);
+            l.w=u16(sf+16)/16+1;l.h=u16(sf+18)/16+1;
+        }
         while(l.styles<4 && f[12+l.styles]!=255)++l.styles;
-        if(l.w>18 || l.h>18 || !qbsp_read(b,QBSP_LIGHTING,u32(f+16),r->light,l.w*l.h*l.styles,&r->cache))return false;
+        if(l.w>18 || l.h>18 || !qbsp_read(b,QBSP_LIGHTING,u32(f+16),r->light,l.w*l.h*l.styles,QR_CACHE(r)))return false;
     }
     ++r->stats.faces;
     for(unsigned i=1;i+1<n;++i)triangle(r,r->poly[slot][0],r->poly[slot][i],r->poly[slot][i+1],l,pixels);
