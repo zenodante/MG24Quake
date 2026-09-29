@@ -49,7 +49,7 @@ Two independently flashable files are generated:
 
 Copy each UF2 in BOOTSEL mode. If the board restarts after the first copy, enter BOOTSEL again for the second. First installation requires both files. Firmware-only updates are sufficient when the resource format and contents have not changed.
 
-Prebuilt files are available in [GitHub Releases](https://github.com/zenodante/MG24Quake/releases): `RP2350-Quake-Firmware-768KiB.uf2` and `RP2350-Quake-Resources-QRN1.uf2`.
+Prebuilt files are available in [GitHub Releases](https://github.com/zenodante/RP2350-Quake/releases): `RP2350-Quake-Firmware-768KiB.uf2` and `RP2350-Quake-Resources-QRN1.uf2`.
 
 | Flash allocation | Size / address |
 |---|---|
