@@ -1,29 +1,28 @@
-# 正常换关修复与发布验证（2026-09-29）
+# Normal level transitions and release validation (2026-09-29)
 
-实机确认：前次对齐修复后，难度传送门已通过；进入章节传送门时出现
-`HOST CHANGE LEVEL at host_cmd.c:362`。这是主动 Sys_Error，不是新的 HardFault。
+Hardware confirmation: the alignment fix allowed the difficulty portal to work. Entering an episode portal then produced `HOST CHANGE LEVEL at host_cmd.c:362`. This was an explicit Sys_Error, not another HardFault.
 
-修复：
+Fixes:
 
-- 删除 Host_Changelevel_f 中无条件的旧调试中断，继续调用现有 SV_SaveSpawnparms、SV_SpawnServer 和客户端重连流程。
-- QMAC_GAME（Mac 完整引擎及 RP2350 完整引擎）允许换关时先显示加载画面。旧 WIN32 调试断言将这次合法更新误判为 `Screen updated before!`，新换关回归实际复现了这个后续问题。
-- 保留其他错误检查，不批量删除 FIXME。资源损坏、实体溢出等检查仍然需要报错。
+- Remove the unconditional legacy debug stop in Host_Changelevel_f, allowing the existing SV_SaveSpawnparms, SV_SpawnServer and client reconnect sequence to execute.
+- Allow QMAC_GAME (the complete Mac and RP2350 engines) to display a loading plaque during a transition. The old WIN32 debug assertion incorrectly reported `Screen updated before!`; the new regression reproduced this second failure after the first fix.
+- Retain other error checks. Do not indiscriminately remove FIXME calls: invalid resources and entity overflows still need to fail explicitly.
 
-## 为什么需要改进工具
+## Why the tools needed improvement
 
-资源合法不代表引擎控制流正确。此前 ARM 的多地图测试用 `map` 重新启动各关，遗漏了玩家过关的 `changelevel`、保留玩家参数和重连路径。必须把包结构验证与游戏流程验证分开记录，不能把前者描述为完整游戏验证。
+Valid resources do not prove correct engine control flow. Earlier multi-map ARM tests used `map` to start each map independently, missing normal `changelevel`, player parameter preservation and reconnection. Package validation and gameplay validation must be recorded separately.
 
-已有 QRN1 检查包括 CRC、镜像范围、模型类型、部分模型图引用和 Flash 分区边界。本次新增目录、模型数组、BSP 数据、纹理、碰撞和动画/精灵结构的原生地址对齐检查。损坏样本测试重新计算 CRC 后再验证，确保未对齐指针确实由结构检查发现。普通像素字节流不强加指针对齐要求。生成器 arm_native.py 已调用该校验，因此新检查自动进入资源生成流程；复用旧资源时 UF2 校验同样会执行它。
+Existing QRN1 checks cover CRC, image bounds, model types, selected graph references and partition boundaries. New checks validate native alignment for directories, model arrays, BSP data, textures, collision and alias/sprite structures. Corruption tests recompute CRC before validation, proving that structure checks reject misaligned pointers. Ordinary pixel byte streams do not receive inappropriate pointer alignment constraints.
 
-本次不改变 QRN1 格式、资源字节或 Flash 布局，无需重烧资源。
+The generator already calls the validator from arm_native.py, so these checks are part of resource generation. UF2 verification also checks reused resource images. No QRN1 format, resource bytes or partition layout changed; resources do not need reflashing.
 
-## 新增回归入口
+## New regression paths
 
-`test_arm_firmware.py --episode-test --frames 100` 将初始位置移到章节门前，面向门并前进，随后执行原始触发器、QuakeC changelevel、命令队列、服务器和客户端代码。成功标准包含实际调用 qcc_changelevel，并在 e1m1 完成 signon。
+`test_arm_firmware.py --episode-test --frames 100` positions the player before the episode portal, faces the portal and moves forward. Original trigger, QuakeC changelevel, command queue, server and client code then execute. Success requires an actual qcc_changelevel call and completed signon in e1m1.
 
-`--changelevel-cycle --cycle 50 --frames 450` 用 changelevel 连续测试 start 和 e1m1–e1m8，共九张地图；地图必须完成客户端 signon。它与旧的 map 测试保留为不同路径。
+`--changelevel-cycle --cycle 50 --frames 450` uses changelevel across start and e1m1–e1m8. All nine maps must complete client signon. The old map-based test remains a separate path.
 
-发布工具新增显式运行门槛：
+Enable release gates with:
 
 ```sh
 python3 Tools/RP2350Pack/build_game_firmware.py build/pak0.pak \
@@ -31,6 +30,8 @@ python3 Tools/RP2350Pack/build_game_firmware.py build/pak0.pak \
   --engine-test-python build-host/arm-test-venv/bin/python
 ```
 
-所选 Python 需要 unicorn 和 pyelftools。开启后运行难度门、章节门、九地图连续换关、按键回归；任一失败就终止，不生成新的成功报告。报告记录 engine_tested、各项结果及固件/资源哈希；未指定此选项时明确记录 engine_tested=false。硬件时序仍需实机验证。
+The selected Python requires unicorn and pyelftools. Tests cover the difficulty portal, episode portal, nine-map transitions and controls. Any failure stops the build before a new success report is written. Reports contain engine_tested, individual results and firmware/resource hashes. Without the option, engine_tested is explicitly false. Hardware timing still requires device validation.
 
-后续应继续增加实际关卡出口、死亡重开、存读档能力边界和实体压力场景；不能仅凭当前测试宣称所有游戏路径已验证。
+The old firmware fails the episode regression with the reported error; the fixed firmware passes both the episode regression and 450-frame transition test. Hardware retesting remains pending.
+
+Further coverage should include actual level exits, death/restart, save/load capability boundaries and entity stress. Current tests do not establish that every gameplay path works.

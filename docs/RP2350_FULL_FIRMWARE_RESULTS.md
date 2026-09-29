@@ -1,78 +1,80 @@
-> 2026-09-29 更新：修复正常 changelevel 路径中的两处旧调试中断，新增章节门与连续换关回归，以及资源原生指针对齐校验。详见 [换关与发布验证](RP2350_CHANGELEVEL_FIX.md)。
+# Complete RP2350 Quake firmware
 
-> 2026-09-28 更新：修复 start 传送后模型裁剪缓冲未对齐导致的 HardFault。
-> 修复版主程序 613,696 字节；QRN1 资源不变。三个难度门各通过 60 帧 ARM 回归，
-> 每次执行 44 次模型裁剪函数。实机复测待确认。详见 [故障定位](RP2350_TELEPORT_DIAGNOSTICS.md)。
+## Latest updates
 
-# RP2350 完整 Quake 游戏固件
+- **2026-09-29:** removed two legacy debug stops in normal changelevel, added episode-portal and continuous transition regressions, and added native resource pointer alignment checks. Firmware payload: **613,624 bytes**. See [transition validation](RP2350_CHANGELEVEL_FIX.md).
+- **2026-09-28:** fixed the unaligned clipping workspace that caused a HardFault after teleporting in start. That build was 613,696 bytes; resources were unchanged. Three difficulty portals each passed 60 ARM frames and 44 clipped-submodel calls. The user subsequently confirmed the difficulty portal works on hardware. See [fault investigation](RP2350_TELEPORT_DIAGNOSTICS.md).
 
-这次生成的是完整 MG24 单机游戏引擎目标 `quake_rp2350`，包含游戏逻辑、编译后的 QuakeC、优化渲染、碰撞、实体、菜单和声音。不是先前的世界查看器、硬件诊断程序或仅用于测量体积的 ELF。
+The `quake_rp2350` target includes the complete MG24 single-player engine: game logic, compiled QuakeC, optimized rendering, collision, entities, menus and sound. It is not the earlier world viewer, bring-up application or size-only ELF.
 
-尚未进行实际设备烧录与真板验收。ARM 仿真验证游戏执行；LCD/DMA、真实音频时序、按键电气连接和实际帧率需要上板确认。
+Hardware startup and the difficulty portal are confirmed. The latest episode-transition fix still needs hardware retesting. ARM emulation checks engine execution; LCD/DMA, audio timing, electrical input wiring and actual frame rate require device testing.
 
-## 烧录文件
+## Flashing
 
-1. `RP2350-Quake-原生资源-QRN1.uf2`：资源，从 `0x100C0000` 开始。
-2. `RP2350-Quake-主程序-768KiB.uf2`：主程序，从 `0x10000000` 开始，包含位于 `0x100BF000` 的 E10 guard。
+1. `RP2350-Quake-Resources-QRN1.uf2`: resources starting at `0x100C0000`.
+2. `RP2350-Quake-Firmware-768KiB.uf2`: firmware starting at `0x10000000`, including the E10 guard at `0x100BF000`.
 
-首次使用或从旧版迁移时，两份都要烧录。建议先资源、再主程序，每次按 BOOTSEL 进入 USB 启动盘后复制对应文件。不要与旧 QXIP 资源 UF2 混用。以后资源及 ABI 未变时可以只更新主程序。当前资源文件使用固定 ARM 指针，不能移动 Flash 起始地址。
+Install both on first use or when migrating from the old layout. Enter BOOTSEL for each copy if the device restarts between them. Do not mix these with old QXIP resource UF2s. Later firmware-only updates are sufficient if resources and ABI remain unchanged. Native resources contain fixed ARM pointers and cannot be moved to another Flash base.
 
-目标是现有 Pimoroni Explorer / RP2350B / 16 MiB Flash 配置。它不是任意 Pico 板都适用的通用引脚固件。ST7789：CS27、DC28、WR30、RD31、数据32–39、背光26；QwSTPad：I2C0 GPIO20/21、地址0x21。缺少手柄时当前外设启动会报错。
+The board is Pimoroni Explorer / RP2350B / 16 MiB Flash, not a generic Pico configuration. ST7789: CS27, DC28, WR30, RD31, data32–39, backlight26. QwSTPad: I2C0 GPIO20/21, address0x21. Peripheral startup currently reports an error if the gamepad is missing.
 
-## 实际尺寸
+## Baseline measurements
 
-| 项目 | 字节 | 说明 |
+The following table records the original complete-engine/keymap build, before the later diagnostic and transition fixes. Do not treat its SRAM figures as new measurements of those later builds. Current firmware Flash size is listed above and in release verification reports.
+
+| Item | Bytes | Notes |
 |---|---:|---|
-| 主程序 Flash | 611,968 | 597.62 KiB |
-| 主程序可用上限 | 782,336 | 768 KiB 中另留4 KiB guard |
-| 主程序剩余 | 170,368 | 未使用资源分区 |
-| 原生资源 | 15,879,760 | 339 文件，21 BSP，61 alias，3 sprite |
-| 资源分区剩余 | 111,024 | 108.42 KiB |
-| SRAM 已分配段合计 | 439,248 | 含双核栈和2 KiB最小 libc heap |
-| Core0 / Core1 栈 | 32,768 / 4,096 | 真实 SRAM 地址，无扩大 RAM 链接技巧 |
-| libc heap 可增长容量 | 91,180 | 包含上表的2 KiB最小 heap；不能再次相加 |
-| 游戏 zone 容量 / 本次峰值 | 131,072 / 43,112 | zone 已计入 BSS |
-| 兼容元数据容量 / 本次峰值 | 32,768 / 13,944 | 元数据池已计入 BSS |
+| Firmware Flash | 611,968 | 597.62 KiB |
+| Firmware limit | 782,336 | 768 KiB reservation minus 4 KiB guard |
+| Firmware headroom | 170,368 | Does not use the resource partition |
+| Native resources | 15,879,760 | 339 files, 21 BSP, 61 alias, 3 sprite |
+| Resource headroom | 111,024 | 108.42 KiB |
+| Allocated SRAM sections | 439,248 | Includes both stacks and 2 KiB minimum libc heap |
+| Core 0 / core 1 stacks | 32,768 / 4,096 | Actual SRAM, no enlarged RAM linker region |
+| libc heap growth capacity | 91,180 | Includes the minimum 2 KiB; do not add it twice |
+| Game zone capacity / observed peak | 131,072 / 43,112 | Zone is already included in BSS |
+| Compatibility metadata capacity / peak | 32,768 / 13,944 | Pool is already included in BSS |
 
-UF2 容器比实际 Flash 数据大约一倍；上表使用实际写入字节，不使用 UF2 文件大小计算预算。运行峰值来自本次九关短回归，不代表任意玩法的绝对上限。
+UF2 containers are roughly twice the Flash payload size. Budgets use programmed data, not container size. Runtime peaks come from short nine-map regressions, not every possible gameplay situation.
 
-## 固定化结果
+## Immutable resources
 
-上位机用真实 ARM 编译器和引擎头文件生成 planes、nodes、leafs、texinfo、surfaces、纹理动画指针、clipnodes、hull0、子模型、alias/sprite 描述，链接到资源固定地址。纹理像素去重后只存一份。WAD 目录提前规范化，字体直接读取 XIP。`RP2350-Quake-资源入口.h` 同步提供各资源固定入口。
+The host uses actual ARM headers/compiler to generate planes, nodes, leaves, texinfo, surfaces, texture animation pointers, clipnodes, hull0, inline models and alias/sprite descriptors at fixed resource addresses. Texture pixels are deduplicated. The WAD directory is normalized offline and font pixels are read directly from XIP. Generated `quake-native.h` provides resource entry addresses.
 
-固件启动校验资源 ABI 和 CRC，换关直接绑定 XIP 数据，无运行时指针重定位，也不逐关擦写 Flash。移除了宿主版本15 MiB/64 MiB模拟 Flash数组。
+Firmware verifies ABI and CRC at startup and binds XIP data on level changes. There are no runtime pointer relocations or per-level Flash writes. Host-only 15 MiB/64 MiB simulated Flash arrays were removed from the target.
 
-剩余元数据池不是几何缓存，也不执行 Flash 写入；它保留当前会被引擎改写的模型加载标记/注册表、预缓存列表，以及尚沿用 MG24 流程的 UI 小描述和运行时实体字段副本。继续优化时可研究固定资源ID与可变标记分离。实体位置、生命、AI状态、动态光源、空间链表、渲染缓冲和混音状态应继续留在 SRAM。
+The remaining metadata pool is not a geometry cache or Flash writer. It stores mutable model load flags/registries, precache lists, small UI descriptors and runtime entity-field copies retained from MG24. Further work can separate fixed resource IDs from mutable flags. Entity position, health, AI, dynamic lights, spatial lists, rendering buffers and mixer state must remain writable.
 
-## 双核与操作
+## Cores and controls
 
-Core0 游戏逻辑和渲染；Core1 单个320×200×8bit framebuffer、两个320像素RGB565行缓冲、LCD、按键、ADPCM/PWM。主核等显示核归还 framebuffer 后再绘制。
+Core 0 runs game logic and rendering. Core 1 owns a single 320×200×8-bit framebuffer during display, two 320-pixel RGB565 rows, LCD, input and ADPCM/PWM. Core 0 waits for framebuffer ownership before drawing.
 
-方向键左右转向、上下前进后退；Y左平移，A右平移，B开火，X换武器，Minus（−）视角向下，Plus（＋）视角向上。本次十个键全部用于上述游戏操作，不再保留手柄跳跃/菜单键。USB串口支持 `map e1m3`、`skill 2` 等控制台命令。
+D-pad left/right turns; up/down moves. Y/A strafe left/right; B fires; X selects the next weapon; Minus/Plus look down/up. All ten buttons serve those actions; jump/menu are not assigned. USB serial accepts commands such as `map e1m3` and `skill 2`.
 
-声音使用8个混音通道：4个动态音效、2个最响静态循环、2个环境循环，随玩家位置更新音量衰减；PWM为单声道。当前分区未留存档区，永久存档/设置保存明确禁用。未在 MG24 单机基础上添加网络多人或音乐。
+Eight mixer channels provide four dynamic effects, two loudest static loops and two ambient loops, with position-dependent attenuation. PWM is mono. Persistent saves/settings are disabled because there is no save partition. No multiplayer or music was added.
 
-## 已完成验证
+## Validation history
 
-此前的540帧九关回归对应完整引擎基线；修改键位后另对新 ELF 运行130帧逐键矩阵回归，验证九个持续动作的按下/松开和一次换武器事件。当前交付校验报告记录新版 ELF 与 UF2 的哈希。
+The original 540-frame nine-map regression tested the complete-engine baseline. The later keymap ELF had a separate 130-frame matrix test checking press/release for nine held actions and one weapon impulse. Reports identify the corresponding ELF/UF2 hashes; these are distinct builds.
 
-- 最终 ARM ELF：九关 `start` 和 `e1m1`–`e1m8`，540次画面提交，全部本地服务器有效且 signon=4；发生移动、开火、受伤与264次动态声音请求。
-- 独立按键路径：60次画面提交，旧键位版本模拟A键和前进；弹药从25降至20，证明绑定未被64字节命令队列丢弃。
-- 仿真 Flash 设置只读，固定结构写入会报错。外设、时间和 RP2350 DCP 双精度操作被替代，不等于真板时序验证。
-- CRC/固定指针/模型入口损坏检查4项通过；UF2分区/guard检查4项通过。
-- PCM/QAD1解码、循环与采样时序测试通过。
-- Mac完整引擎重新编译，180帧 `start` 脚本回归通过。
-- 两个UF2逐页还原与原始二进制一致，家族ID、写入地址、guard和边界检查通过。
+- Baseline ARM execution: start and e1m1–e1m8, 540 frame submissions, active local servers and signon=4; movement, firing, damage and 264 dynamic sound requests occurred.
+- Separate earlier input test: 60 submissions with the old A-button/fire binding and forward movement; shells fell from 25 to 20, confirming bindings were not lost in the 64-byte command queue.
+- Emulated Flash is read-only. Peripherals, time and RP2350 DCP double helpers are intercepted, so this is not hardware timing validation.
+- Initial CRC/pointer/model corruption checks: four passed. Alignment corruption coverage was added later. UF2 partition/guard checks: four passed.
+- PCM/QAD1 decoding, looping and sample timing tests passed.
+- The Mac full engine rebuilt and passed a 180-frame start regression.
+- Both UF2s reconstruct the original bytes, with family ID, address, guard and boundary checks passing.
+- Latest transition tests: the previous firmware reproduces HOST CHANGE LEVEL at the episode portal; fixed firmware enters e1m1 and passes 450 frames of changelevel across nine maps.
 
-校验报告记录最终 ELF、资源和 UF2 的 SHA-256，ARM测试哈希与交付文件一致。两张PNG是ARM模拟执行得到的画面，不是真板照片。
+Reports record SHA-256 for ELF, resources and UF2s. ARM screenshots are emulator output, not device photographs.
 
-## 重新构建
+## Rebuild
 
-在仓库根目录：
+From the repository root:
 
 ```sh
 python3 Tools/RP2350Pack/build_game_firmware.py build/pak0.pak \
   -o build-host/rp2350-release
 ```
 
-默认使用同级 `pico8c` 中的 SDK、ARM GCC和已有picotool。单独生成资源用 `run_pipeline.py --resource-profile rp2350-game`。实现和更详细说明在 `platform/rp2350/game/`。
+SDK, ARM GCC and picotool default to sibling `pico8c`. Generate resources alone with `run_pipeline.py --resource-profile rp2350-game`. See [the implementation guide](../platform/rp2350/game/README.md) and [release regression options](RP2350_CHANGELEVEL_FIX.md).
