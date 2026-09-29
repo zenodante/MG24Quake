@@ -3,7 +3,7 @@ list(FILTER engine_sources EXCLUDE REGEX "/(vid_sdl|snd_sdl|debug|snd_dma|snd_me
 # A private copy prevents the phase-1 probe's legacy symbol rename leaking in.
 configure_file("${CMAKE_CURRENT_LIST_DIR}/../../../QuakeMG24/Quake/common.c" "${CMAKE_CURRENT_BINARY_DIR}/common.c" COPYONLY)
 add_executable(quake_rp2350 ${engine_sources} "${CMAKE_CURRENT_BINARY_DIR}/common.c"
-    platform.c resources.c metadata.c
+    platform.c resources.c metadata.c diagnostics.c
     sound.c ../../macos/game_surface.c
     ../qpak.c ../qmix.c ../qservice.c ../boards/st7789.c ../boards/qwstpad.c
     ../../../QuakeMG24/src/font8x8.c)

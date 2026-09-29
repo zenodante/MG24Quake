@@ -533,7 +533,7 @@ static inline void TransformVector(vec3_t in, vec3_t out)
     out[2] = DotProduct(in, _g->vpn);
 }
 //
-extern uint8_t textureCacheBuffer[MAX_TEXTURE_SIZE];        // for surface rendering and edges.
+_Alignas(8) extern uint8_t textureCacheBuffer[MAX_TEXTURE_SIZE];        // for surface rendering and edges.
 static inline void* getTextureCacheBuffer()
 {
     return textureCacheBuffer;

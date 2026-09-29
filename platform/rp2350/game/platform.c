@@ -3,12 +3,13 @@
 #include "qservice.h"
 #include "flash_layout.h"
 #include <stdarg.h>
+#include "diagnostics.h"
 extern bool stdio_init_all(void);
 extern uint64_t time_us_64(void);
 static byte palette[768];
 static unsigned frame_slot;
 const char *qmac_game_pak="fixed XIP";
-void Sys_Error(char *fmt,...){va_list ap;va_start(ap,fmt);vprintf(fmt,ap);va_end(ap);exit(1);}
+void Sys_Error(char *fmt,...){char message[120];va_list ap;va_start(ap,fmt);vsnprintf(message,sizeof message,fmt,ap);va_end(ap);qrp_diagnostic_error(message);printf("%s\n",message);for(;;)__asm volatile("nop");}
 void Sys_Printf(char *fmt,...){va_list ap;va_start(ap,fmt);vprintf(fmt,ap);va_end(ap);}
 QDFLOAT Sys_FloatTime(void){return (double)time_us_64()*1e-6;}
 void Sys_Quit(void){exit(0);}

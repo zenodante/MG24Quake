@@ -1,7 +1,8 @@
 #include "quakedef.h"
 #include "r_local.h"
 #include "d_local.h"
-uint8_t textureCacheBuffer[MAX_TEXTURE_SIZE];
+/* Shared scratch storage also holds vertices, edges and native pointers. */
+_Alignas(8) uint8_t textureCacheBuffer[MAX_TEXTURE_SIZE];
 byte *r_skysource;
 static byte *texture_source;
 extern uint8_t *nodeHadDlight;

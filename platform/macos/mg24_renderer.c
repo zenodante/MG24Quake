@@ -24,7 +24,8 @@ static brush_model_data_t *compile_inline_brush;
 static unsigned compile_models;
 model_t *mod_known;
 #define brush (*mod_known->brushModelData)
-uint8_t textureCacheBuffer[MAX_TEXTURE_SIZE];
+/* Shared scratch storage also holds vertices, edges and native pointers. */
+_Alignas(8) uint8_t textureCacheBuffer[MAX_TEXTURE_SIZE];
 static const qbsp_t *bound;
 static void *binding;
 static size_t binding_size;

@@ -351,7 +351,8 @@ surfcache_t *D_CacheSurface (msurface_t *surface, int miplevel)
 	return surface->cachespots[miplevel];
 }
 #else
-uint8_t textureCacheBuffer[MAX_TEXTURE_SIZE];        // for surface rendering and edges.
+/* Shared scratch storage also holds vertices, edges and native pointers. */
+_Alignas(8) uint8_t textureCacheBuffer[MAX_TEXTURE_SIZE];        // for surface rendering and edges.
 enum
 {
     TEXTURE_BUFFER_STATE_NONE = 0,                  // the texture buffer is not used/initialized

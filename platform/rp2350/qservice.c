@@ -10,6 +10,17 @@
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 #include <assert.h>
+#ifdef QRP_FULL_GAME
+#include "game/diagnostics.h"
+static void check_core0_fault(void) {
+    if(__atomic_load_n(&qrp_diagnostic.ready,__ATOMIC_ACQUIRE)) {
+        qrp_diagnostic_display();
+        for(;;)tight_loop_contents();
+    }
+}
+#else
+#define check_core0_fault() ((void)0)
+#endif
 #include <string.h>
 
 enum {
@@ -53,7 +64,11 @@ static uint32_t load(const uint32_t *p) { return __atomic_load_n(p,__ATOMIC_ACQU
 static void publish(uint32_t *p,uint32_t v) { __atomic_store_n(p,v,__ATOMIC_RELEASE); }
 static void counter(uint32_t *p) { __atomic_fetch_add(p,1,__ATOMIC_RELAXED); }
 
-static void audio_lock_mixer(void) { spin_lock_unsafe_blocking(audio_lock); }
+static void audio_lock_mixer(void) {
+    while(!spin_try_lock_unsafe(audio_lock)) {
+        if(get_core_num()==1)check_core0_fault();
+    }
+}
 static void audio_unlock_mixer(void) { spin_unlock_unsafe(audio_lock); }
 
 static void audio_dma_irq(void) {
@@ -221,6 +236,7 @@ static void video_present(void) {
         lcd_write(slot,dst);
 
         /* Exactly as p8: keep audio/input serviced during a long frame transfer. */
+        check_core0_fault();
         audio_service();
         input_service();
         slot^=1u;
@@ -268,6 +284,7 @@ static void worker(void) {
     publish(&started,1);
 
     for(;;) {
+        check_core0_fault();
         if(load(&frame.state)==READY)video_present();
         input_service();
         audio_service();
